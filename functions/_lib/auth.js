@@ -119,12 +119,12 @@ export function normalizePhone(value) {
 async function getSessionSecret(env) {
   const configured = safeText(env.AUTH_SESSION_SECRET);
   if (configured) return configured;
-  if (!env.LIT_AUTH_KV) return "local-development-secret";
+  if (!env.RESEARCH_AUTH_KV) return "local-development-secret";
   const key = "app:session_secret";
-  const stored = await env.LIT_AUTH_KV.get(key);
+  const stored = await env.RESEARCH_AUTH_KV.get(key);
   if (stored) return stored;
   const generated = randomId("secret");
-  await env.LIT_AUTH_KV.put(key, generated);
+  await env.RESEARCH_AUTH_KV.put(key, generated);
   return generated;
 }
 

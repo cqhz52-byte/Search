@@ -8,7 +8,7 @@ database_name = "literature-evidence"
 database_id = "replace-with-cloudflare-d1-database-id"
 
 [[kv_namespaces]]
-binding = "LIT_AUTH_KV"
+binding = "RESEARCH_AUTH_KV"
 id = "replace-with-cloudflare-kv-namespace-id"
 
 [[r2_buckets]]
