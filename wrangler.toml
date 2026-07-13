@@ -2,23 +2,11 @@ name = "literature-evidence"
 pages_build_output_dir = "public"
 compatibility_date = "2026-07-13"
 
-[[d1_databases]]
-binding = "LIT_DB"
-database_name = "literature-evidence"
-database_id = "replace-with-cloudflare-d1-database-id"
-
-[[kv_namespaces]]
-binding = "RESEARCH_AUTH_KV"
-id = "replace-with-cloudflare-kv-namespace-id"
-
-[[r2_buckets]]
-binding = "LIT_R2"
-bucket_name = "literature-evidence"
-
-# Optional. The API works without this binding by using small manual batches.
-# [[queues.producers]]
-# binding = "LIT_QUEUE"
-# queue = "literature-evidence-jobs"
+# Configure production bindings in Cloudflare Pages settings:
+# - D1 database binding: LIT_DB
+# - KV namespace binding: RESEARCH_AUTH_KV
+# - R2 bucket binding: LIT_R2
+# Optional queue binding: LIT_QUEUE
 
 [vars]
 APP_RESOURCE_MODE = "free"

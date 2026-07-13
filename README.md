@@ -13,7 +13,11 @@ python -m http.server 5179 -d public
 ## Cloudflare 部署
 
 1. 在 Cloudflare 创建 D1、KV、R2。
-2. 替换 `wrangler.toml` 里的 D1/KV/R2 绑定 ID。
+2. 在 Cloudflare Pages 项目设置里添加绑定：
+   - D1 database：`LIT_DB`
+   - KV namespace：`RESEARCH_AUTH_KV`
+   - R2 bucket：`LIT_R2`
+   - 可选 Queue：`LIT_QUEUE`
 3. 执行 D1 migration：
 
 ```powershell
