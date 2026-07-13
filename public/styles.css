@@ -90,6 +90,41 @@ input, textarea { width: 100%; border: 1px solid var(--line); border-radius: 8px
 select { min-height: 40px; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--ink); padding: 0 10px; }
 textarea { min-height: 86px; resize: vertical; }
 .task-launcher { margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.pipeline { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.pipeline-step {
+  min-height: 74px;
+  justify-content: space-between;
+  border-color: var(--line);
+  background: white;
+  color: var(--ink);
+  text-align: left;
+}
+.pipeline-step > span:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+}
+.pipeline-step strong {
+  display: block;
+  font-size: 14px;
+}
+.pipeline-step small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.step-number {
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 999px;
+  background: #e7f7ef;
+  color: var(--brand);
+  font-size: 13px;
+  font-weight: 950;
+}
 .table-wrap { overflow: auto; margin-top: 12px; border: 1px solid var(--line); border-radius: 8px; }
 table { width: 100%; min-width: 680px; border-collapse: collapse; background: white; }
 th, td { padding: 11px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; font-size: 14px; }
@@ -119,5 +154,6 @@ td strong { display: block; max-width: 440px; }
   .purpose-row { grid-template-columns: 72px 1fr; }
   .purpose-row small { grid-column: 2; text-align: left; }
   .top-actions, .toolbar, .task-launcher, .row-actions { width: 100%; }
-  .top-actions button, .toolbar button, .task-launcher button, .row-actions button { flex: 1; }
+  .pipeline { grid-template-columns: 1fr; }
+  .top-actions button, .toolbar button, .row-actions button { flex: 1; }
 }

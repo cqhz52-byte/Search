@@ -11,10 +11,23 @@ const state = {
 };
 
 const jobLabels = {
-  search: "检索题录",
-  download_pdfs: "下载开放 PDF",
-  parse_pdfs: "解析 PDF",
-  extract_evidence: "提取证据"
+  expand_query: "AI 扩充检索内容",
+  search_abstracts: "检索摘要",
+  analyze_abstracts: "AI 分析摘要",
+  generate_download_list: "生成下载列表",
+  download_pdfs: "开始下载全文",
+  parse_and_analyze_pdfs: "解析全文并 AI 分析",
+  generate_analysis_results: "生成分析结果"
+};
+
+const jobNotes = {
+  expand_query: "扩展 PICO、同义词、MeSH/关键词和布尔逻辑。",
+  search_abstracts: "按小批量检索题录与摘要，只保存必要元数据。",
+  analyze_abstracts: "根据纳入/排除标准聚焦到候选文献。",
+  generate_download_list: "整理 DOI、PMID、开放全文入口和失败待办。",
+  download_pdfs: "仅下载开放或已授权来源，避免反复重试。",
+  parse_and_analyze_pdfs: "LlamaParse 识别解析，DeepSeek 结构化提取。",
+  generate_analysis_results: "生成证据表、限制说明和结论草稿。"
 };
 
 const app = document.querySelector("#app");
@@ -271,8 +284,12 @@ function projectActions(project) {
 }
 
 function taskLauncher(projectId) {
-  return `<div class="task-launcher">${Object.entries(jobLabels).map(([type, label]) =>
-    `<button class="secondary" data-job-type="${type}" data-project-id="${escapeAttr(projectId)}">${icon("play")} ${label}</button>`
+  return `<div class="task-launcher pipeline">${Object.entries(jobLabels).map(([type, label], index) =>
+    `<button class="pipeline-step" data-job-type="${type}" data-project-id="${escapeAttr(projectId)}">
+      <span class="step-number">${index + 1}</span>
+      <span><strong>${label}</strong><small>${jobNotes[type]}</small></span>
+      ${icon("play")}
+    </button>`
   ).join("")}</div>`;
 }
 
@@ -426,7 +443,7 @@ function demoResponse(path, options = {}) {
         }
       },
       d1: { projects: 2, literature: 486, extractions: 31, jobs: 7, documents: 28 },
-      today: { usage: { "job:search:created": 3, "job:parse_pdfs:resume": 2 }, usedUnits: 46, dailyLimit: 800, remainingUnits: 754 },
+      today: { usage: { "job:expand_query:created": 1, "job:analyze_abstracts:created": 2, "job:parse_and_analyze_pdfs:resume": 2 }, usedUnits: 46, dailyLimit: 800, remainingUnits: 754 },
       projects: [
         { id: "prj_demo", title: "糖尿病远程干预证据综述", status: "active", literature_count: 286, bytes: 17825792 },
         { id: "prj_arch", title: "术后康复管理", status: "archived", literature_count: 200, bytes: 6029312 }
@@ -443,12 +460,12 @@ function demoResponse(path, options = {}) {
         { id: "lit1", title: "Telemedicine intervention for glycemic control", doi: "10.0000/demo1", source: "PubMed", year: 2024, screening_status: "include", pdf_status: "downloaded", parse_status: "parsed", extraction_status: "done" },
         { id: "lit2", title: "Mobile health coaching in type 2 diabetes", doi: "10.0000/demo2", source: "Europe PMC", year: 2023, screening_status: "maybe", pdf_status: "listed", parse_status: "not_requested", extraction_status: "not_requested" }
       ],
-      jobs: [{ id: "job_demo", project_id: "prj_demo", type: "parse_pdfs", status: "paused_quota", batch_limit: 15, processed_count: 30, total_count: 120, updated_at: new Date().toISOString() }]
+      jobs: [{ id: "job_demo", project_id: "prj_demo", type: "parse_and_analyze_pdfs", status: "paused_quota", batch_limit: 15, processed_count: 30, total_count: 120, updated_at: new Date().toISOString() }]
     };
   }
   if (path.startsWith("/api/projects")) return { projects: [{ id: "prj_demo", title: "糖尿病远程干预证据综述", status: "active", literature_count: 286, bytes: 17825792 }] };
   if (path.startsWith("/api/admin/users")) return { users: [{ id: "usr_demo", phone: "admin", name: "超级管理员", role: "super_admin", enabled: 1 }] };
-  return { ok: true, project: { id: "prj_demo", title: "新证据项目", status: "active" }, job: { id: `job_${Date.now()}`, type: "search", status: "queued" }, releasedBytes: 1048576, deletedCount: 1 };
+  return { ok: true, project: { id: "prj_demo", title: "新证据项目", status: "active" }, job: { id: `job_${Date.now()}`, type: "expand_query", status: "queued" }, releasedBytes: 1048576, deletedCount: 1 };
 }
 
 Api.session().catch(() => {

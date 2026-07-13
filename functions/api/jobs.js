@@ -2,14 +2,22 @@ import { requireSessionResponse } from "../_lib/auth.js";
 import { recordUsage, totalDailyUnits } from "../_lib/resources.js";
 import { getBatchLimit, getDailyLimit, json, nowIso, randomId, readJson, requireDb, safeText } from "../_lib/http.js";
 
-const HEAVY_JOB_TYPES = new Set(["search", "download_pdfs", "parse_pdfs", "extract_evidence"]);
+const HEAVY_JOB_TYPES = new Set([
+  "expand_query",
+  "search_abstracts",
+  "analyze_abstracts",
+  "generate_download_list",
+  "download_pdfs",
+  "parse_and_analyze_pdfs",
+  "generate_analysis_results"
+]);
 
 export async function onRequestPost({ request, env }) {
   const auth = await requireSessionResponse(request, env);
   if (auth.response) return auth.response;
   const db = requireDb(env);
   const body = await readJson(request);
-  const type = safeText(body.type, "search");
+  const type = safeText(body.type, "expand_query");
   if (!HEAVY_JOB_TYPES.has(type)) return json({ error: "不支持的任务类型。" }, 400);
   const projectId = safeText(body.projectId);
   if (!projectId) return json({ error: "缺少项目 ID。" }, 400);
