@@ -4,8 +4,9 @@ compatibility_date = "2026-07-13"
 
 # Configure production bindings in Cloudflare Pages settings:
 # - D1 database binding: LIT_DB
-# - KV namespace binding: RESEARCH_AUTH_KV
 # - R2 bucket binding: LIT_R2
+# Optional:
+# - KV namespace binding: RESEARCH_AUTH_KV
 # Optional queue binding: LIT_QUEUE
 
 [vars]

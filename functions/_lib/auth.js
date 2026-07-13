@@ -119,12 +119,25 @@ export function normalizePhone(value) {
 async function getSessionSecret(env) {
   const configured = safeText(env.AUTH_SESSION_SECRET);
   if (configured) return configured;
-  if (!env.RESEARCH_AUTH_KV) return "local-development-secret";
+
   const key = "app:session_secret";
-  const stored = await env.RESEARCH_AUTH_KV.get(key);
-  if (stored) return stored;
+  if (env.RESEARCH_AUTH_KV) {
+    const stored = await env.RESEARCH_AUTH_KV.get(key);
+    if (stored) return stored;
+    const generated = randomId("secret");
+    await env.RESEARCH_AUTH_KV.put(key, generated);
+    return generated;
+  }
+
+  if (!env.LIT_DB) return "local-development-secret";
+  const stored = await env.LIT_DB.prepare("SELECT value FROM app_settings WHERE key = ?").bind(key).first();
+  if (stored?.value) return stored.value;
   const generated = randomId("secret");
-  await env.RESEARCH_AUTH_KV.put(key, generated);
+  const now = nowIso();
+  await env.LIT_DB
+    .prepare("INSERT INTO app_settings (key, value, created_at, updated_at) VALUES (?, ?, ?, ?)")
+    .bind(key, generated, now, now)
+    .run();
   return generated;
 }
 
