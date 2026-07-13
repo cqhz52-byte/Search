@@ -1,0 +1,19 @@
+{
+  "name": "文献证据工作台",
+  "short_name": "文献证据",
+  "description": "免费额度优先的文献检索、PDF解析、证据提取与资源释放工具。",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f6f7f4",
+  "theme_color": "#0f766e",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

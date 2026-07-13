@@ -1,0 +1,14 @@
+{
+  "name": "literature-evidence-pwa",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "python -m http.server 5179 -d public",
+    "cf:dev": "wrangler pages dev public --compatibility-date=2026-07-13",
+    "db:migrate:local": "wrangler d1 migrations apply LIT_DB --local",
+    "db:migrate:remote": "wrangler d1 migrations apply LIT_DB --remote"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

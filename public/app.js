@@ -1,0 +1,460 @@
+const state = {
+  usage: null,
+  projects: [],
+  trash: [],
+  users: [],
+  detail: null,
+  selectedId: "",
+  message: "",
+  loading: false,
+  loginOpen: false
+};
+
+const jobLabels = {
+  search: "检索题录",
+  download_pdfs: "下载开放 PDF",
+  parse_pdfs: "解析 PDF",
+  extract_evidence: "提取证据"
+};
+
+const app = document.querySelector("#app");
+
+async function api(path, options = {}) {
+  try {
+    const response = await fetch(path, {
+      credentials: "include",
+      headers: options.body ? { "Content-Type": "application/json", ...(options.headers || {}) } : options.headers,
+      ...options
+    });
+    const text = await response.text();
+    const data = text ? JSON.parse(text) : {};
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    return data;
+  } catch (error) {
+    if (location.hostname === "127.0.0.1" || location.hostname === "localhost") return demoResponse(path, options);
+    throw error;
+  }
+}
+
+const Api = {
+  session: () => api("/api/auth/session"),
+  login: (phone, password) => api("/api/auth/login", { method: "POST", body: JSON.stringify({ phone, password }) }),
+  resourceUsage: () => api("/api/resource-usage"),
+  projects: (deleted = false) => api(`/api/projects${deleted ? "?deleted=1" : ""}`),
+  createProject: (title, question) => api("/api/projects", { method: "POST", body: JSON.stringify({ title, question, seedDemo: true }) }),
+  project: (id) => api(`/api/projects/${id}`),
+  archiveProject: (id) => api(`/api/projects/${id}/archive`, { method: "POST" }),
+  deleteProject: (id) => api(`/api/projects/${id}`, { method: "DELETE" }),
+  releasePdfs: (id) => api(`/api/projects/${id}/release-pdfs`, { method: "POST" }),
+  releaseParseArtifacts: (id) => api(`/api/projects/${id}/release-parse-artifacts`, { method: "POST" }),
+  cleanupTemp: () => api("/api/resource-cleanup/temp", { method: "POST" }),
+  createJob: (projectId, type) => api("/api/jobs", { method: "POST", body: JSON.stringify({ projectId, type, batchLimit: 15, totalCount: 120 }) }),
+  pauseJob: (id) => api(`/api/jobs/${id}/pause`, { method: "POST" }),
+  resumeJob: (id) => api(`/api/jobs/${id}/resume`, { method: "POST" }),
+  restore: (id) => api(`/api/trash/${id}/restore`, { method: "POST" }),
+  permanentDelete: (id) => api(`/api/trash/${id}/permanent`, { method: "DELETE" })
+  ,
+  users: () => api("/api/admin/users"),
+  saveUser: (payload) => api("/api/admin/users", { method: "POST", body: JSON.stringify(payload) }),
+  deleteUser: (phone) => api(`/api/admin/users?phone=${encodeURIComponent(phone)}`, { method: "DELETE" })
+};
+
+async function refresh(nextSelectedId = state.selectedId) {
+  state.loading = true;
+  render();
+  try {
+    const [usageData, projectData, trashData, userData] = await Promise.all([
+      Api.resourceUsage(),
+      Api.projects(),
+      Api.projects(true),
+      Api.users().catch(() => ({ users: [] }))
+    ]);
+    state.usage = usageData;
+    state.projects = projectData.projects || [];
+    state.trash = trashData.projects || [];
+    state.users = userData.users || [];
+    state.selectedId = nextSelectedId || state.projects[0]?.id || "";
+    state.detail = state.selectedId ? await Api.project(state.selectedId) : null;
+  } catch (error) {
+    state.message = error.message || "加载失败";
+    if (state.message.includes("登录")) state.loginOpen = true;
+  } finally {
+    state.loading = false;
+    render();
+  }
+}
+
+async function runAction(label, action) {
+  state.message = `${label}...`;
+  render();
+  try {
+    const result = await action();
+    const released = result?.releasedBytes ? `，释放 ${formatBytes(result.releasedBytes)}` : "";
+    state.message = `${label}完成${released}`;
+    await refresh(state.selectedId);
+  } catch (error) {
+    state.message = error.message || `${label}失败`;
+    render();
+  }
+}
+
+function render() {
+  const usage = state.usage;
+  const selectedProject = state.detail?.project || state.projects.find((project) => project.id === state.selectedId);
+  const quotaPercent = usage ? Math.min(100, Math.round((usage.today.usedUnits / Math.max(1, usage.today.dailyLimit)) * 100)) : 0;
+  app.innerHTML = `
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <div class="brand">${icon("shield")} 文献证据工作台</div>
+          <p>免费额度优先：小批次任务、可暂停、可清理、可释放原始文件。</p>
+        </div>
+        <div class="top-actions">
+          <button class="icon-button" data-action="refresh" title="刷新">${state.loading ? icon("loader", "spin") : icon("refresh")}</button>
+          <button class="secondary" data-action="open-login">${icon("unlock")} 登录</button>
+        </div>
+      </header>
+      ${state.message ? `<div class="toast">${escapeHtml(state.message)}</div>` : ""}
+      <main class="layout">
+        <section class="resource-panel">
+          ${sectionTitle("gauge", "资源中心", `<button data-action="cleanup">${icon("recycle")} 清理临时文件</button>`)}
+          <div class="metric-grid">
+            ${metric("R2 对象", usage ? usage.r2.totalObjects : "-", usage ? formatBytes(usage.r2.totalBytes) : "读取中")}
+            ${metric("D1 题录", usage ? usage.d1.literature || 0 : "-", `${usage?.d1.projects || 0} 个项目`)}
+            ${metric("今日任务", usage ? `${usage.today.usedUnits}/${usage.today.dailyLimit}` : "-", `剩余 ${usage?.today.remainingUnits ?? "-"} units`)}
+          </div>
+          <div class="quota-line"><span style="width:${quotaPercent}%"></span></div>
+          ${purposeBars(usage)}
+          <div class="resource-note">${icon("zap")}<span>默认每批最多 15 篇；超预算任务会暂停为 paused_quota，次日或手动恢复。</span></div>
+        </section>
+
+        <section class="project-panel">
+          ${sectionTitle("database", "项目", createProjectMarkup())}
+          <div class="project-list">
+            ${state.projects.length ? state.projects.map(projectRow).join("") : empty("还没有项目，先创建一个研究问题。")}
+          </div>
+        </section>
+
+        <section class="detail-panel">
+          ${sectionTitle("drive", selectedProject?.title || "项目详情", selectedProject ? projectActions(selectedProject) : "")}
+          ${state.detail ? `${taskLauncher(state.detail.project.id)}${jobsMarkup(state.detail.jobs || [])}${literatureTable(state.detail.literature || [])}` : empty("选择项目后查看题录、任务和证据提取状态。")}
+        </section>
+
+        <section class="trash-panel">
+          ${sectionTitle("trash", "回收站", "")}
+          <div class="trash-list">
+            ${state.trash.length ? state.trash.map(trashRow).join("") : empty("没有待释放项目。")}
+          </div>
+        </section>
+
+        <section class="users-panel">
+          ${sectionTitle("users", "授权用户", userFormMarkup())}
+          <div class="user-list">
+            ${state.users.length ? state.users.map(userRow).join("") : empty("管理员登录后可管理授权用户。")}
+          </div>
+        </section>
+      </main>
+      ${state.loginOpen ? loginDialog() : ""}
+    </div>
+  `;
+  bindEvents();
+}
+
+function bindEvents() {
+  document.querySelector("[data-action='refresh']")?.addEventListener("click", () => refresh());
+  document.querySelector("[data-action='open-login']")?.addEventListener("click", () => {
+    state.loginOpen = true;
+    render();
+  });
+  document.querySelector("[data-action='cleanup']")?.addEventListener("click", () => runAction("清理临时文件", Api.cleanupTemp));
+  document.querySelectorAll("[data-select-project]").forEach((button) => button.addEventListener("click", () => refresh(button.dataset.selectProject)));
+  document.querySelector("[data-create-project]")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const result = await Api.createProject(form.get("title") || "新证据项目", form.get("question") || "");
+    await refresh(result.project.id);
+  });
+  document.querySelectorAll("[data-project-action]").forEach((button) => button.addEventListener("click", () => {
+    const id = button.dataset.projectId;
+    const action = button.dataset.projectAction;
+    const map = {
+      releasePdfs: ["释放 PDF", () => Api.releasePdfs(id)],
+      releaseParse: ["释放解析产物", () => Api.releaseParseArtifacts(id)],
+      archive: ["归档项目", () => Api.archiveProject(id)],
+      delete: ["删除项目", () => Api.deleteProject(id)]
+    };
+    runAction(map[action][0], map[action][1]);
+  }));
+  document.querySelectorAll("[data-job-type]").forEach((button) => button.addEventListener("click", () => {
+    runAction(`启动${jobLabels[button.dataset.jobType]}`, () => Api.createJob(button.dataset.projectId, button.dataset.jobType));
+  }));
+  document.querySelectorAll("[data-job-action]").forEach((button) => button.addEventListener("click", () => {
+    const action = button.dataset.jobAction === "pause" ? Api.pauseJob : Api.resumeJob;
+    runAction(button.dataset.jobAction === "pause" ? "暂停任务" : "恢复任务", () => action(button.dataset.jobId));
+  }));
+  document.querySelectorAll("[data-trash-action]").forEach((button) => button.addEventListener("click", () => {
+    const action = button.dataset.trashAction === "restore" ? Api.restore : Api.permanentDelete;
+    runAction(button.dataset.trashAction === "restore" ? "恢复项目" : "永久释放", () => action(button.dataset.projectId));
+  }));
+  document.querySelector("[data-user-form]")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    await runAction("保存授权用户", () => Api.saveUser({
+      phone: form.get("phone"),
+      name: form.get("name"),
+      role: form.get("role"),
+      password: form.get("password")
+    }));
+  });
+  document.querySelectorAll("[data-delete-user]").forEach((button) => button.addEventListener("click", () => {
+    runAction("删除授权用户", () => Api.deleteUser(button.dataset.deleteUser));
+  }));
+  document.querySelector("[data-login-form]")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    try {
+      await Api.login(form.get("phone"), form.get("password"));
+      state.loginOpen = false;
+      state.message = "登录成功";
+      await refresh();
+    } catch (error) {
+      document.querySelector(".form-error").textContent = error.message || "登录失败";
+    }
+  });
+  document.querySelector("[data-close-login]")?.addEventListener("click", () => {
+    state.loginOpen = false;
+    render();
+  });
+}
+
+function sectionTitle(iconName, title, action) {
+  return `<div class="section-title"><h2>${icon(iconName)}${escapeHtml(title)}</h2>${action || ""}</div>`;
+}
+
+function metric(title, value, note) {
+  return `<div class="metric"><span>${escapeHtml(title)}</span><strong>${escapeHtml(String(value))}</strong><small>${escapeHtml(note)}</small></div>`;
+}
+
+function purposeBars(usage) {
+  const purposes = usage?.r2.byPurpose || {};
+  const rows = ["pdf", "parse", "export"].map((key) => ({ key, count: purposes[key]?.count || 0, bytes: purposes[key]?.bytes || 0 }));
+  const max = Math.max(1, ...rows.map((row) => row.bytes));
+  return `<div class="purpose-bars">${rows.map((row) => `
+    <div class="purpose-row">
+      <label>${purposeName(row.key)}</label>
+      <div><span style="width:${Math.round((row.bytes / max) * 100)}%"></span></div>
+      <small>${row.count} 个 · ${formatBytes(row.bytes)}</small>
+    </div>`).join("")}</div>`;
+}
+
+function createProjectMarkup() {
+  return `<form class="create-form" data-create-project>
+    <input name="title" placeholder="项目名称" required>
+    <textarea name="question" placeholder="PICO/研究问题"></textarea>
+    <button type="submit">${icon("plus")} 创建</button>
+  </form>`;
+}
+
+function projectRow(project) {
+  return `<button class="project-row ${project.id === state.selectedId ? "active" : ""}" data-select-project="${escapeAttr(project.id)}">
+    <span><strong>${escapeHtml(project.title)}</strong><small>${project.status} · ${project.literature_count || 0} 条题录 · ${formatBytes(project.bytes || 0)}</small></span>
+  </button>`;
+}
+
+function projectActions(project) {
+  return `<div class="toolbar">
+    <button data-project-action="releasePdfs" data-project-id="${escapeAttr(project.id)}">${icon("file")} 释放 PDF</button>
+    <button data-project-action="releaseParse" data-project-id="${escapeAttr(project.id)}">${icon("recycle")} 释放解析</button>
+    <button class="secondary" data-project-action="archive" data-project-id="${escapeAttr(project.id)}">${icon("archive")} 归档</button>
+    <button class="danger" data-project-action="delete" data-project-id="${escapeAttr(project.id)}">${icon("trash")} 删除</button>
+  </div>`;
+}
+
+function taskLauncher(projectId) {
+  return `<div class="task-launcher">${Object.entries(jobLabels).map(([type, label]) =>
+    `<button class="secondary" data-job-type="${type}" data-project-id="${escapeAttr(projectId)}">${icon("play")} ${label}</button>`
+  ).join("")}</div>`;
+}
+
+function jobsMarkup(jobs) {
+  return `<div class="jobs">${jobs.length ? jobs.map((job) => {
+    const total = job.total_count || 0;
+    const processed = job.processed_count || 0;
+    const percent = total ? Math.round((processed / total) * 100) : 0;
+    return `<div class="job-row">
+      <div>
+        <strong>${escapeHtml(jobLabels[job.type] || job.type)}</strong>
+        <small>${escapeHtml(job.status)} · ${processed}/${total || "-"} · 批量 ${job.batch_limit || 15}</small>
+        <div class="job-progress"><span style="width:${percent}%"></span></div>
+      </div>
+      <div class="row-actions">
+        <button class="secondary icon-only" title="暂停" data-job-action="pause" data-job-id="${escapeAttr(job.id)}">${icon("pause")}</button>
+        <button class="secondary icon-only" title="恢复" data-job-action="resume" data-job-id="${escapeAttr(job.id)}">${icon("play")}</button>
+      </div>
+    </div>`;
+  }).join("") : empty("没有运行中的任务。")}</div>`;
+}
+
+function literatureTable(items) {
+  if (!items.length) return empty("还没有题录。");
+  return `<div class="table-wrap"><table>
+    <thead><tr><th>题名</th><th>来源</th><th>初筛</th><th>PDF</th><th>解析</th><th>证据</th></tr></thead>
+    <tbody>${items.map((item) => `<tr>
+      <td><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.doi || item.pmid || "无 DOI/PMID")}</small></td>
+      <td>${escapeHtml(item.source || "-")} ${escapeHtml(String(item.year || ""))}</td>
+      <td>${badge(item.screening_status)}</td>
+      <td>${badge(item.pdf_status)}</td>
+      <td>${badge(item.parse_status)}</td>
+      <td>${badge(item.extraction_status)}</td>
+    </tr>`).join("")}</tbody>
+  </table></div>`;
+}
+
+function trashRow(project) {
+  return `<div class="trash-row">
+    <span><strong>${escapeHtml(project.title)}</strong><small>${formatBytes(project.bytes || 0)} · 7 天内可恢复</small></span>
+    <div class="row-actions">
+      <button class="secondary" data-trash-action="restore" data-project-id="${escapeAttr(project.id)}">恢复</button>
+      <button class="danger" data-trash-action="delete" data-project-id="${escapeAttr(project.id)}">释放</button>
+    </div>
+  </div>`;
+}
+
+function userFormMarkup() {
+  return `<form class="user-form" data-user-form>
+    <input name="phone" placeholder="账号/手机号" required>
+    <input name="name" placeholder="姓名/备注">
+    <select name="role">
+      <option value="researcher">研究者</option>
+      <option value="project_admin">项目管理员</option>
+      <option value="viewer">只读成员</option>
+      <option value="super_admin">超级管理员</option>
+    </select>
+    <input name="password" type="password" placeholder="新用户必填，修改可留空">
+    <button type="submit">${icon("plus")} 保存</button>
+  </form>`;
+}
+
+function userRow(user) {
+  return `<div class="user-row">
+    <span><strong>${escapeHtml(user.phone)}</strong><small>${escapeHtml(user.name || "-")} · ${escapeHtml(user.role)} · ${user.enabled === 0 ? "停用" : "启用"}</small></span>
+    <button class="danger icon-only" title="删除用户" data-delete-user="${escapeAttr(user.phone)}">${icon("trash")}</button>
+  </div>`;
+}
+
+function loginDialog() {
+  return `<div class="dialog-backdrop">
+    <form class="dialog" data-login-form>
+      <h2>${icon("unlock")} 授权登录</h2>
+      <p>首次部署时，第一个登录账号会成为超级管理员。</p>
+      <label>账号/手机号<input name="phone" required></label>
+      <label>密码<input name="password" type="password" required></label>
+      <div class="form-error"></div>
+      <div class="row-actions">
+        <button type="submit">登录</button>
+        <button class="secondary" type="button" data-close-login>关闭</button>
+      </div>
+    </form>
+  </div>`;
+}
+
+function badge(value = "") {
+  return `<span class="badge ${escapeAttr(value)}">${escapeHtml(value.replace("_", " "))}</span>`;
+}
+
+function empty(text) {
+  return `<div class="empty">${escapeHtml(text)}</div>`;
+}
+
+function icon(name, className = "") {
+  const paths = {
+    shield: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z",
+    refresh: "M21 12a9 9 0 0 1-15.3 6.4M3 12A9 9 0 0 1 18.3 5.6M3 5v6h6M21 19v-6h-6",
+    unlock: "M7 11V8a5 5 0 0 1 9.9-1M5 11h14v10H5z",
+    gauge: "M4 14a8 8 0 1 1 16 0M12 14l4-4M7 18h10",
+    recycle: "M7 19H5l2-3M17 5h2l-2 3M7.7 7.7 2-3.4 2 3.4M16.3 16.3l-2 3.4-2-3.4M9.7 4.3a8 8 0 0 1 8 5.7M14.3 19.7a8 8 0 0 1-8-5.7",
+    database: "M4 6c0-2 16-2 16 0s-16 2-16 0v12c0 2 16 2 16 0V6M4 12c0 2 16 2 16 0",
+    drive: "M5 5h14l2 7v7H3v-7l2-7ZM7 17h.01M11 17h6",
+    trash: "M3 6h18M8 6V4h8v2M6 6l1 15h10l1-15",
+    zap: "M13 2 4 14h7l-2 8 9-12h-7l2-8Z",
+    plus: "M12 5v14M5 12h14",
+    file: "M14 2H6v20h12V8l-4-6ZM14 2v6h4",
+    archive: "M3 7h18M5 7v13h14V7M9 11h6",
+    play: "M8 5v14l11-7-11-7Z",
+    pause: "M8 5v14M16 5v14",
+    loader: "M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"
+    ,
+    users: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"
+  };
+  return `<svg class="${className}" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${paths[name] || paths.shield}"/></svg>`;
+}
+
+function purposeName(key) {
+  return key === "pdf" ? "PDF 原文" : key === "parse" ? "解析产物" : key === "export" ? "导出文件" : key;
+}
+
+function formatBytes(value) {
+  if (!value) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let size = Number(value);
+  let index = 0;
+  while (size >= 1024 && index < units.length - 1) {
+    size /= 1024;
+    index += 1;
+  }
+  return `${size >= 10 || index === 0 ? Math.round(size) : size.toFixed(1)} ${units[index]}`;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
+}
+
+function escapeAttr(value) {
+  return escapeHtml(value).replace(/`/g, "&#096;");
+}
+
+function demoResponse(path, options = {}) {
+  if (path.includes("/resource-usage")) {
+    return {
+      r2: {
+        totalBytes: 23855104,
+        totalObjects: 28,
+        byPurpose: {
+          pdf: { count: 12, bytes: 18350080 },
+          parse: { count: 10, bytes: 4456448 },
+          export: { count: 6, bytes: 1048576 }
+        }
+      },
+      d1: { projects: 2, literature: 486, extractions: 31, jobs: 7, documents: 28 },
+      today: { usage: { "job:search:created": 3, "job:parse_pdfs:resume": 2 }, usedUnits: 46, dailyLimit: 800, remainingUnits: 754 },
+      projects: [
+        { id: "prj_demo", title: "糖尿病远程干预证据综述", status: "active", literature_count: 286, bytes: 17825792 },
+        { id: "prj_arch", title: "术后康复管理", status: "archived", literature_count: 200, bytes: 6029312 }
+      ]
+    };
+  }
+  if (path === "/api/projects?deleted=1") {
+    return { projects: [{ id: "prj_deleted", title: "已删除的示例项目", status: "deleted", literature_count: 34, bytes: 1048576, deleted_at: new Date().toISOString() }] };
+  }
+  if (path.startsWith("/api/projects/") && !path.includes("release") && !path.includes("archive") && options.method !== "DELETE") {
+    return {
+      project: { id: "prj_demo", title: "糖尿病远程干预证据综述", status: "active", literature_count: 286, bytes: 17825792 },
+      literature: [
+        { id: "lit1", title: "Telemedicine intervention for glycemic control", doi: "10.0000/demo1", source: "PubMed", year: 2024, screening_status: "include", pdf_status: "downloaded", parse_status: "parsed", extraction_status: "done" },
+        { id: "lit2", title: "Mobile health coaching in type 2 diabetes", doi: "10.0000/demo2", source: "Europe PMC", year: 2023, screening_status: "maybe", pdf_status: "listed", parse_status: "not_requested", extraction_status: "not_requested" }
+      ],
+      jobs: [{ id: "job_demo", project_id: "prj_demo", type: "parse_pdfs", status: "paused_quota", batch_limit: 15, processed_count: 30, total_count: 120, updated_at: new Date().toISOString() }]
+    };
+  }
+  if (path.startsWith("/api/projects")) return { projects: [{ id: "prj_demo", title: "糖尿病远程干预证据综述", status: "active", literature_count: 286, bytes: 17825792 }] };
+  if (path.startsWith("/api/admin/users")) return { users: [{ id: "usr_demo", phone: "admin", name: "超级管理员", role: "super_admin", enabled: 1 }] };
+  return { ok: true, project: { id: "prj_demo", title: "新证据项目", status: "active" }, job: { id: `job_${Date.now()}`, type: "search", status: "queued" }, releasedBytes: 1048576, deletedCount: 1 };
+}
+
+Api.session().catch(() => {
+  state.loginOpen = true;
+}).finally(() => refresh());
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("/service-worker.js").catch(() => {}));
+}

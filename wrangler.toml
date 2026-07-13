@@ -1,0 +1,30 @@
+name = "literature-evidence"
+pages_build_output_dir = "public"
+compatibility_date = "2026-07-13"
+
+[[d1_databases]]
+binding = "LIT_DB"
+database_name = "literature-evidence"
+database_id = "replace-with-cloudflare-d1-database-id"
+
+[[kv_namespaces]]
+binding = "LIT_AUTH_KV"
+id = "replace-with-cloudflare-kv-namespace-id"
+
+[[r2_buckets]]
+binding = "LIT_R2"
+bucket_name = "literature-evidence"
+
+# Optional. The API works without this binding by using small manual batches.
+# [[queues.producers]]
+# binding = "LIT_QUEUE"
+# queue = "literature-evidence-jobs"
+
+[vars]
+APP_RESOURCE_MODE = "free"
+DEFAULT_BATCH_LIMIT = "15"
+DAILY_JOB_UNIT_LIMIT = "800"
+MAX_PDF_BYTES = "15728640"
+TEMP_RETENTION_DAYS = "7"
+PDF_RETENTION_DAYS = "30"
+PARSE_RETENTION_DAYS = "30"
