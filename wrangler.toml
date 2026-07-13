@@ -2,12 +2,18 @@ name = "literature-evidence"
 pages_build_output_dir = "public"
 compatibility_date = "2026-07-13"
 
-# Configure production bindings in Cloudflare Pages settings:
-# - D1 database binding: LIT_DB
-# - R2 bucket binding: LIT_R2
-# Optional:
+[[d1_databases]]
+binding = "LIT_DB"
+database_name = "lit-db"
+database_id = "6bc3a0b0-52a1-4e3b-8764-349c7dd3c903"
+
+[[r2_buckets]]
+binding = "LIT_R2"
+bucket_name = "lit-r2"
+
+# Optional bindings:
 # - KV namespace binding: RESEARCH_AUTH_KV
-# Optional queue binding: LIT_QUEUE
+# - Queue binding: LIT_QUEUE
 
 [vars]
 APP_RESOURCE_MODE = "free"
