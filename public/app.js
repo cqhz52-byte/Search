@@ -1,4 +1,4 @@
-const APP_VERSION = "2026.07.14.7";
+const APP_VERSION = "2026.07.14.8";
 
 const state = {
   usage: null,
@@ -8,6 +8,7 @@ const state = {
   settings: null,
   detail: null,
   selectedId: "",
+  editingProjectId: "",
   message: "",
   loading: false,
   busy: {},
@@ -65,8 +66,10 @@ const Api = {
   login: (phone, password) => api("/api/auth/login", { method: "POST", body: JSON.stringify({ phone, password }) }),
   resourceUsage: () => api("/api/resource-usage"),
   projects: (deleted = false) => api(`/api/projects${deleted ? "?deleted=1" : ""}`),
-  createProject: (title, question) => api("/api/projects", { method: "POST", body: JSON.stringify({ title, question, seedDemo: true }) }),
+  createProject: (title, question) => api("/api/projects", { method: "POST", body: JSON.stringify({ title, question }) }),
   project: (id) => api(`/api/projects/${id}`),
+  updateProject: (id, payload) => api(`/api/projects/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
+  runStep: (projectId, type) => api(`/api/projects/${projectId}/run-step`, { method: "POST", body: JSON.stringify({ type }) }),
   archiveProject: (id) => api(`/api/projects/${id}/archive`, { method: "POST" }),
   deleteProject: (id) => api(`/api/projects/${id}`, { method: "DELETE" }),
   releasePdfs: (id) => api(`/api/projects/${id}/release-pdfs`, { method: "POST" }),
@@ -143,11 +146,26 @@ function closeStepDetail() {
 
 function mergeLocalJobs(detail) {
   if (!detail || !detail.project || !detail.project.id) return detail;
+  mergeServerArtifacts(detail);
   const localJobs = state.localJobs.filter((job) => job.project_id === detail.project.id);
   const serverJobs = detail.jobs || [];
   const seen = new Set(localJobs.map((job) => job.id));
   detail.jobs = localJobs.concat(serverJobs.filter((job) => !seen.has(job.id)));
   return detail;
+}
+
+function mergeServerArtifacts(detail) {
+  const projectId = detail.project.id;
+  const artifacts = { ...(state.stepArtifacts[projectId] || {}) };
+  for (const job of detail.jobs || []) {
+    try {
+      const artifact = JSON.parse(job.payload_json || "{}").artifact;
+      if (artifact?.type && (!artifacts[artifact.type]?.updatedAt || String(job.updated_at || "") >= String(artifacts[artifact.type].updatedAt || ""))) {
+        artifacts[artifact.type] = { ...artifact, updatedAt: job.updated_at || artifact.updatedAt || new Date().toISOString() };
+      }
+    } catch {}
+  }
+  state.stepArtifacts[projectId] = artifacts;
 }
 
 function setExecutionMode(mode) {
@@ -158,7 +176,7 @@ function setExecutionMode(mode) {
 }
 
 function createPipelineJob(projectId, type) {
-  if (state.executionMode === "cloud") return Api.createJob(projectId, type);
+  if (state.executionMode === "cloud" || !["127.0.0.1", "localhost"].includes(location.hostname)) return Api.runStep(projectId, type);
   writeStepArtifact(projectId, type, {
     status: "running",
     summary: "本机正在生成本步骤结果，完成后会在这里显示可核查的数据。"
@@ -325,6 +343,7 @@ function render() {
 
         <section class="project-panel mobile-tab-panel ${state.mobileTab === "projects" ? "is-active" : ""}">
           ${sectionTitle("database", "项目", createProjectMarkup())}
+          ${state.detail ? selectedProjectMarkup(state.detail.project) : ""}
           <div class="project-list">
             ${state.projects.length ? state.projects.map(projectRow).join("") : empty("还没有项目，先创建一个研究问题。")}
           </div>
@@ -380,11 +399,27 @@ function bindEvents() {
   document.querySelectorAll("[data-step-open]").forEach((button) => button.addEventListener("click", () => openStepDetail(button.dataset.projectId, button.dataset.stepType, button.dataset.stepOpen)));
   document.querySelector("[data-step-close]")?.addEventListener("click", closeStepDetail);
   document.querySelectorAll("[data-select-project]").forEach((button) => button.addEventListener("click", () => refresh(button.dataset.selectProject)));
+  document.querySelectorAll("[data-edit-project]").forEach((button) => button.addEventListener("click", () => {
+    state.editingProjectId = button.dataset.editProject;
+    render();
+  }));
+  document.querySelectorAll("[data-cancel-edit-project]").forEach((button) => button.addEventListener("click", () => {
+    state.editingProjectId = "";
+    render();
+  }));
   document.querySelector("[data-create-project]")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const result = await Api.createProject(form.get("title") || "\u65b0\u8bc1\u636e\u9879\u76ee", form.get("question") || "");
     await refresh(result.project.id);
+  });
+  document.querySelector("[data-project-edit-form]")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const id = form.get("id");
+    await runAction("保存项目", () => Api.updateProject(id, { title: form.get("title"), question: form.get("question") }), `project:edit:${id}`);
+    state.editingProjectId = "";
+    await refresh(id);
   });
   document.querySelectorAll("[data-project-action]").forEach((button) => button.addEventListener("click", () => {
     const id = button.dataset.projectId;
@@ -451,7 +486,7 @@ function bindEvents() {
 }
 
 function updateBanner() {
-  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>流程页保持 7 张卡总览，输入和结果改为独立详情页查看后关闭。</span></div><button data-action="dismiss-update">知道了</button></div>';
+  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>项目可查看/编辑/设为当前，生产环境流程步骤接入 DeepSeek 与真实摘要检索。</span></div><button data-action="dismiss-update">知道了</button></div>';
 }
 
 function mobileTabbar() {
@@ -508,9 +543,39 @@ function createProjectMarkup() {
 }
 
 function projectRow(project) {
-  return `<button class="project-row ${project.id === state.selectedId ? "active" : ""}" data-select-project="${escapeAttr(project.id)}">
-    <span><strong>${escapeHtml(project.title)}</strong><small>${project.status} · ${project.literature_count || 0} 条题录 · ${formatBytes(project.bytes || 0)}</small></span>
-  </button>`;
+  const active = project.id === state.selectedId;
+  return `<div class="project-row ${active ? "active" : ""}">
+    <button class="project-main" data-select-project="${escapeAttr(project.id)}">
+      <span><strong>${escapeHtml(project.title)}</strong><small>${active ? "当前项目 · " : ""}${project.status} · ${project.literature_count || 0} 条题录 · ${formatBytes(project.bytes || 0)}</small></span>
+    </button>
+    <div class="row-actions">
+      <button class="secondary" data-select-project="${escapeAttr(project.id)}">${active ? "查看" : "设为当前"}</button>
+      <button class="secondary" data-edit-project="${escapeAttr(project.id)}">${icon("file")} 编辑</button>
+    </div>
+  </div>`;
+}
+
+function selectedProjectMarkup(project) {
+  const editing = state.editingProjectId === project.id;
+  if (editing) {
+    return `<form class="project-editor" data-project-edit-form>
+      <input type="hidden" name="id" value="${escapeAttr(project.id)}">
+      <label>项目名称<input name="title" value="${escapeAttr(project.title)}" required></label>
+      <label>研究问题 / PICO<textarea name="question">${escapeHtml(project.question || "")}</textarea></label>
+      <div class="row-actions">
+        <button type="submit" ${busyAttr(`project:edit:${project.id}`)}>${busyIcon("file", `project:edit:${project.id}`)} 保存</button>
+        <button class="secondary" type="button" data-cancel-edit-project>取消</button>
+      </div>
+    </form>`;
+  }
+  return `<div class="project-summary">
+    <div><strong>${escapeHtml(project.title)}</strong><small>当前项目 · ${escapeHtml(project.status || "active")}</small></div>
+    <p>${escapeHtml(project.question || "尚未填写研究问题。")}</p>
+    <div class="row-actions">
+      <button class="secondary" data-edit-project="${escapeAttr(project.id)}">${icon("file")} 编辑项目</button>
+      <button class="secondary" data-mobile-tab="workflow">${icon("play")} 执行流程</button>
+    </div>
+  </div>`;
 }
 
 function projectActions(project) {

@@ -1,5 +1,5 @@
 import { requireSessionResponse } from "../../_lib/auth.js";
-import { json, nowIso, requireDb } from "../../_lib/http.js";
+import { json, nowIso, readJson, requireDb, safeText } from "../../_lib/http.js";
 
 export async function onRequestGet({ request, env, params }) {
   const auth = await requireSessionResponse(request, env);
@@ -8,11 +8,27 @@ export async function onRequestGet({ request, env, params }) {
   const project = await db.prepare("SELECT * FROM projects WHERE id = ?").bind(params.id).first();
   if (!project) return json({ error: "项目不存在。" }, 404);
   const literature = await db
-    .prepare("SELECT id, title, doi, pmid, source, year, screening_status, pdf_status, parse_status, extraction_status FROM literature WHERE project_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 500")
+    .prepare("SELECT id, title, doi, pmid, pmcid, source, year, journal, abstract, screening_status, pdf_status, parse_status, extraction_status FROM literature WHERE project_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 500")
     .bind(params.id)
     .all();
   const jobs = await db.prepare("SELECT * FROM jobs WHERE project_id = ? ORDER BY updated_at DESC LIMIT 20").bind(params.id).all();
   return json({ project, literature: literature.results || [], jobs: jobs.results || [] });
+}
+
+export async function onRequestPut({ request, env, params }) {
+  const auth = await requireSessionResponse(request, env);
+  if (auth.response) return auth.response;
+  const db = requireDb(env);
+  const body = await readJson(request);
+  const title = safeText(body.title).slice(0, 120);
+  const question = safeText(body.question).slice(0, 2000);
+  if (!title) return json({ error: "请输入项目名称。" }, 400);
+  const existing = await db.prepare("SELECT id FROM projects WHERE id = ? AND deleted_at IS NULL").bind(params.id).first();
+  if (!existing) return json({ error: "项目不存在。" }, 404);
+  const now = nowIso();
+  await db.prepare("UPDATE projects SET title = ?, question = ?, updated_at = ? WHERE id = ?").bind(title, question, now, params.id).run();
+  const project = await db.prepare("SELECT * FROM projects WHERE id = ?").bind(params.id).first();
+  return json({ ok: true, project });
 }
 
 export async function onRequestDelete({ request, env, params }) {

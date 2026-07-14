@@ -175,8 +175,56 @@ button.danger { border-color: #ffd0cc; background: var(--danger-bg); color: var(
   gap: 8px;
 }
 .project-list, .trash-list, .user-list, .jobs { display: grid; gap: 8px; }
-.project-row { width: 100%; min-height: 66px; justify-content: flex-start; text-align: left; border-color: var(--line); background: white; color: var(--ink); }
+.project-row {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: white;
+}
 .project-row.active { border-color: var(--brand); background: #ecf8f5; }
+.project-main {
+  min-height: auto;
+  justify-content: flex-start;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+.project-summary, .project-editor {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+  border: 1px solid #c7efe5;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fbfffd;
+}
+.project-summary strong,
+.project-summary small,
+.project-editor label {
+  display: block;
+}
+.project-summary small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 850;
+}
+.project-summary p {
+  margin: 0;
+  color: #31403b;
+  line-height: 1.55;
+}
+.project-editor label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 850;
+}
 .trash-row, .user-row, .job-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: white; }
 .job-row > div:first-child { flex: 1; min-width: 180px; }
 .job-progress { margin-top: 8px; }
