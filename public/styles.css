@@ -41,9 +41,44 @@ button.danger { border-color: #ffd0cc; background: var(--danger-bg); color: var(
 .app-shell { width: min(1440px, 100%); margin: 0 auto; padding: 18px; }
 .topbar { display: flex; justify-content: space-between; align-items: center; gap: 18px; margin-bottom: 14px; }
 .brand { display: flex; align-items: center; gap: 8px; font-size: 22px; font-weight: 950; color: var(--brand); }
+.version-badge {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  border: 1px solid #c7efe5;
+  border-radius: 999px;
+  padding: 0 8px;
+  background: #edfdf8;
+  color: #31554b;
+  font-size: 12px;
+  font-weight: 900;
+}
 .topbar p { margin: 6px 0 0; color: var(--muted); line-height: 1.55; }
 .top-actions { display: flex; align-items: center; gap: 8px; }
 .toast { margin-bottom: 12px; border: 1px solid #d7e5ff; border-radius: 8px; padding: 10px 12px; background: #f3f7ff; color: #174182; font-weight: 800; }
+.update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  border: 1px solid #c7efe5;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #edfdf8;
+  color: #31554b;
+}
+.update-banner strong,
+.update-banner span {
+  display: block;
+}
+.update-banner span {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.mobile-tabbar { display: none; }
+.workflow-panel, .task-status-panel { display: none; }
 .activity-bar {
   position: relative;
   min-height: 38px;
@@ -76,7 +111,7 @@ button.danger { border-color: #ffd0cc; background: var(--danger-bg); color: var(
   gap: 14px;
   min-width: 0;
 }
-.resource-panel, .project-panel, .detail-panel, .trash-panel, .users-panel {
+.resource-panel, .project-panel, .detail-panel, .trash-panel, .users-panel, .workflow-panel, .task-status-panel {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
@@ -89,6 +124,7 @@ button.danger { border-color: #ffd0cc; background: var(--danger-bg); color: var(
 .detail-panel { grid-area: detail; }
 .trash-panel { grid-area: trash; }
 .users-panel { grid-area: users; }
+.workflow-panel, .task-status-panel { grid-area: detail; }
 .section-title { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 12px; }
 .section-title h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 17px; }
 .section-title > * { min-width: 0; }
@@ -250,9 +286,53 @@ td strong { display: block; max-width: 440px; }
   .layout { grid-template-columns: 1fr 1fr; grid-template-areas: "resource resource" "projects detail" "trash detail" "users detail"; }
 }
 @media (max-width: 760px) {
-  .app-shell { padding: 12px; }
+  .app-shell { padding: 12px 12px 86px; }
   .topbar, .section-title, .trash-row, .user-row, .job-row { align-items: stretch; flex-direction: column; }
   .layout { grid-template-columns: 1fr; grid-template-areas: "resource" "projects" "detail" "trash" "users"; }
+  .desktop-panel { display: none; }
+  .mobile-tab-panel { display: none; }
+  .mobile-tab-panel.is-active { display: block; }
+  .mobile-tabbar {
+    position: fixed;
+    left: 10px;
+    right: 10px;
+    bottom: 10px;
+    z-index: 20;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 6px;
+    border: 1px solid rgba(217, 225, 220, 0.92);
+    border-radius: 8px;
+    padding: 6px;
+    background: rgba(255, 254, 249, 0.96);
+    box-shadow: 0 14px 34px rgba(26, 37, 33, 0.18);
+    backdrop-filter: blur(12px);
+  }
+  .mobile-tabbar button {
+    min-height: 54px;
+    flex-direction: column;
+    gap: 3px;
+    border-color: transparent;
+    background: transparent;
+    color: var(--muted);
+    padding: 4px 2px;
+    font-size: 12px;
+  }
+  .mobile-tabbar button.active {
+    background: #e7f7ef;
+    color: var(--brand);
+  }
+  .mobile-tabbar svg {
+    width: 19px;
+    height: 19px;
+  }
+  .mobile-project-name {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 850;
+  }
+  .update-banner { align-items: stretch; flex-direction: column; }
+  .update-banner button { width: 100%; }
   .metric-grid { grid-template-columns: 1fr; }
   .purpose-row { grid-template-columns: 72px 1fr; }
   .purpose-row small { grid-column: 2; text-align: left; }

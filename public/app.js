@@ -1,3 +1,5 @@
+const APP_VERSION = "2026.07.14.2";
+
 const state = {
   usage: null,
   projects: [],
@@ -8,6 +10,8 @@ const state = {
   message: "",
   loading: false,
   busy: {},
+  mobileTab: localStorage.getItem("lit_mobile_tab") || "workflow",
+  updateNotice: localStorage.getItem("lit_seen_version") !== APP_VERSION,
   executionMode: localStorage.getItem("lit_execution_mode") || "local",
   localJobs: loadLocalJobs(),
   localTimers: {},
@@ -233,7 +237,7 @@ function render() {
     <div class="app-shell">
       <header class="topbar">
         <div>
-          <div class="brand">${icon("shield")} 文献证据工作台</div>
+          <div class="brand">${icon("shield")} 文献证据工作台 <small class="version-badge">v${APP_VERSION}</small></div>
           <p>免费额度优先：小批次任务、可暂停、可清理、可释放原始文件。</p>
         </div>
         <div class="top-actions">
@@ -241,10 +245,11 @@ function render() {
           <button class="secondary" data-action="open-login">${icon("unlock")} 登录</button>
         </div>
       </header>
+      ${state.updateNotice ? updateBanner() : ""}
       ${state.message ? `<div class="toast">${escapeHtml(state.message)}</div>` : ""}
       ${state.loading || activeCount ? `<div class="activity-bar"><span></span><strong>${state.loading ? "正在刷新数据" : `正在执行 ${activeCount} 个操作`}</strong></div>` : ""}
       <main class="layout">
-        <section class="resource-panel">
+        <section class="resource-panel mobile-tab-panel ${state.mobileTab === "resources" ? "is-active" : ""}">
           ${sectionTitle("gauge", "资源中心", `<button data-action="cleanup" ${busyAttr("cleanup")}>${busyIcon("recycle", "cleanup")} ${isBusy("cleanup") ? "\u6e05\u7406\u4e2d" : "\u6e05\u7406\u4e34\u65f6\u6587\u4ef6"}</button>`)}
           <div class="metric-grid">
             ${metric("R2 对象", usage ? usage.r2.totalObjects : "-", usage ? formatBytes(usage.r2.totalBytes) : "读取中")}
@@ -256,32 +261,42 @@ function render() {
           ${executionPanel()}
         </section>
 
-        <section class="project-panel">
+        <section class="project-panel mobile-tab-panel ${state.mobileTab === "projects" ? "is-active" : ""}">
           ${sectionTitle("database", "项目", createProjectMarkup())}
           <div class="project-list">
             ${state.projects.length ? state.projects.map(projectRow).join("") : empty("还没有项目，先创建一个研究问题。")}
           </div>
         </section>
 
-        <section class="detail-panel">
+        <section class="detail-panel desktop-panel">
           ${sectionTitle("drive", selectedProject?.title || "项目详情", selectedProject ? projectActions(selectedProject) : "")}
           ${state.detail ? `${taskLauncher(state.detail.project.id)}${jobsMarkup(state.detail.jobs || [])}${literatureTable(state.detail.literature || [])}` : empty("选择项目后查看题录、任务和证据提取状态。")}
         </section>
 
-        <section class="trash-panel">
+        <section class="workflow-panel mobile-tab-panel ${state.mobileTab === "workflow" ? "is-active" : ""}">
+          ${sectionTitle("play", "执行流程", selectedProject ? `<span class="mobile-project-name">${escapeHtml(selectedProject.title)}</span>` : "")}
+          ${state.detail ? taskLauncher(state.detail.project.id) : empty("请先在项目页选择一个项目。")}
+        </section>
+
+        <section class="task-status-panel mobile-tab-panel ${state.mobileTab === "tasks" ? "is-active" : ""}">
+          ${sectionTitle("drive", "任务状态", selectedProject ? projectActions(selectedProject) : "")}
+          ${state.detail ? `${jobsMarkup(state.detail.jobs || [])}${literatureTable(state.detail.literature || [])}` : empty("请先在项目页选择一个项目。")}
+        </section>
+        <section class="trash-panel mobile-tab-panel ${state.mobileTab === "manage" ? "is-active" : ""}">
           ${sectionTitle("trash", "回收站", "")}
           <div class="trash-list">
             ${state.trash.length ? state.trash.map(trashRow).join("") : empty("没有待释放项目。")}
           </div>
         </section>
 
-        <section class="users-panel">
+        <section class="users-panel mobile-tab-panel ${state.mobileTab === "manage" ? "is-active" : ""}">
           ${sectionTitle("users", "授权用户", userFormMarkup())}
           <div class="user-list">
             ${state.users.length ? state.users.map(userRow).join("") : empty("管理员登录后可管理授权用户。")}
           </div>
         </section>
       </main>
+      ${mobileTabbar()}
       ${state.loginOpen ? loginDialog() : ""}
     </div>
   `;
@@ -290,6 +305,8 @@ function render() {
 
 function bindEvents() {
   document.querySelector("[data-action='refresh']")?.addEventListener("click", () => refresh());
+  document.querySelector("[data-action='dismiss-update']")?.addEventListener("click", dismissUpdateNotice);
+  document.querySelectorAll("[data-mobile-tab]").forEach((button) => button.addEventListener("click", () => setMobileTab(button.dataset.mobileTab)));
   document.querySelector("[data-action='open-login']")?.addEventListener("click", () => {
     state.loginOpen = true;
     render();
@@ -357,6 +374,35 @@ function bindEvents() {
     state.loginOpen = false;
     render();
   });
+}
+
+function updateBanner() {
+  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>新增手机端底部多标签布局，流程按钮和执行状态分开查看。</span></div><button data-action="dismiss-update">知道了</button></div>';
+}
+
+function mobileTabbar() {
+  const tabs = [
+    ["workflow", "play", "流程"],
+    ["tasks", "drive", "任务"],
+    ["projects", "database", "项目"],
+    ["resources", "gauge", "资源"],
+    ["manage", "users", "管理"]
+  ];
+  return '<nav class="mobile-tabbar">' + tabs.map(([id, iconName, label]) =>
+    '<button class="' + (state.mobileTab === id ? 'active' : '') + '" data-mobile-tab="' + id + '">' + icon(iconName) + '<span>' + label + '</span></button>'
+  ).join('') + '</nav>';
+}
+
+function setMobileTab(tab) {
+  state.mobileTab = tab;
+  localStorage.setItem("lit_mobile_tab", tab);
+  render();
+}
+
+function dismissUpdateNotice() {
+  state.updateNotice = false;
+  localStorage.setItem("lit_seen_version", APP_VERSION);
+  render();
 }
 
 function sectionTitle(iconName, title, action) {
