@@ -49,16 +49,27 @@ async function runStep(context) {
 async function runExpandQuery(context) {
   const key = await getDeepseekKey(context.db);
   const prompt = [
-    "你是循证医学文献检索专家。请基于研究问题生成紧凑 JSON，不要输出 Markdown。",
-    "JSON schema: {\"pico\":{\"P\":\"\",\"I\":\"\",\"C\":\"\",\"O\":\"\"},\"terms\":{\"en\":[],\"zh\":[]},\"queries\":{\"pubmed\":\"\",\"europePmc\":\"\",\"cn\":\"\"},\"notes\":[]}",
+    "你是循证医学文献检索专家。任务是“检索词扩充”，不是翻译。请基于研究问题识别 PICO 后，为每个核心概念扩展同义词、近义词、缩写、全称、旧称、商品名/设备名、技术变体、MeSH/自由词、中文常用别名和英文常用别名。",
+    "关键要求：不能只给原词和直译；每个核心概念尽量给 6-15 个可检索变体；如果术语有缩写或临床俗称必须列出。",
+    "示例：不可逆电穿孔不能只翻译成 irreversible electroporation，还应扩展 IRE、pulsed electric field、PEF、electric field ablation、electrical field ablation、NanoKnife、steep pulse、陡脉冲、脉冲电场、电场消融、脉冲电场消融、纳米刀等。",
+    "请输出紧凑 JSON，不要输出 Markdown。",
+    "JSON schema: {\"pico\":{\"P\":\"\",\"I\":\"\",\"C\":\"\",\"O\":\"\"},\"concepts\":[{\"name\":\"\",\"role\":\"P|I|C|O|other\",\"en\":[],\"zh\":[],\"mesh\":[],\"freeText\":[]}],\"terms\":{\"en\":[],\"zh\":[]},\"queries\":{\"pubmed\":\"\",\"europePmc\":\"\",\"cn\":\"\"},\"notes\":[]}",
     `项目名称：${context.project.title}`,
     `研究问题：${context.project.question || context.project.title}`
   ].join("\n");
   const data = await deepseekJson(key, prompt);
+  const conceptRows = Array.isArray(data.concepts) ? data.concepts.map((item) => ({
+    "概念": item.name || "-",
+    "角色": item.role || "-",
+    "英文扩展": asList(item.en).join("; "),
+    "中文扩展": asList(item.zh).join("；"),
+    "MeSH/主题词": asList(item.mesh).join("; ")
+  })) : [];
   const sections = [
     { title: "PICO 拆解", rows: Object.entries(data.pico || {}).map(([keyName, value]) => ({ "维度": keyName, "内容": value || "-" })) },
-    { title: "英文扩展词", items: data.terms?.en || [] },
-    { title: "中文扩展词", items: data.terms?.zh || [] },
+    ...(conceptRows.length ? [{ title: "按概念扩展的检索词", rows: conceptRows }] : []),
+    { title: "英文扩展词", items: asList(data.terms?.en) },
+    { title: "中文扩展词", items: asList(data.terms?.zh) },
     { title: "Europe PMC 检索式", code: data.queries?.europePmc || data.queries?.pubmed || context.project.question || context.project.title },
     { title: "PubMed 检索式", code: data.queries?.pubmed || data.queries?.europePmc || context.project.question || context.project.title },
     { title: "中文数据库检索式", code: data.queries?.cn || "" }
@@ -320,6 +331,12 @@ async function tryDownloadOpenPdf(context, item) {
 
 function emptyArtifact(type, summary) {
   return { type, status: "completed", summary, data: {}, sections: [{ title: "提示", body: summary }] };
+}
+
+function asList(value) {
+  if (Array.isArray(value)) return value.map((item) => safeText(item)).filter(Boolean);
+  const text = safeText(value);
+  return text ? [text] : [];
 }
 
 function aiStep(type) {

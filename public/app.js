@@ -1,4 +1,4 @@
-const APP_VERSION = "2026.07.14.8";
+const APP_VERSION = "2026.07.14.9";
 
 const state = {
   usage: null,
@@ -486,7 +486,7 @@ function bindEvents() {
 }
 
 function updateBanner() {
-  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>项目可查看/编辑/设为当前，生产环境流程步骤接入 DeepSeek 与真实摘要检索。</span></div><button data-action="dismiss-update">知道了</button></div>';
+  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>AI 检索词扩充改为同义词、缩写、设备名、技术变体和主题词扩展，不再按翻译处理。</span></div><button data-action="dismiss-update">知道了</button></div>';
 }
 
 function mobileTabbar() {
@@ -712,11 +712,11 @@ function buildStepInput(type, detail) {
   const included = literature.filter((item) => ["include", "maybe"].includes(item.screening_status));
   const inputs = {
     expand_query: () => ({
-      summary: "本步骤输入是你创建项目时填写的研究问题。AI 会把它拆成 PICO、同义词和数据库检索式。",
+      summary: "本步骤输入是你创建项目时填写的研究问题。AI 会拆解 PICO，并扩展同义词、缩写、旧称、设备名、技术变体和主题词；不是简单翻译。",
       sections: [
         { title: "项目", body: project.title || "未命名项目" },
         { title: "研究问题 / PICO", body: project.question || "尚未填写研究问题。建议先在项目中写清人群、干预、对照和结局。" },
-        { title: "处理要求", items: ["扩展中英文关键词", "生成 PubMed / 中文数据库检索式", "控制检索范围，减少漏检和无关文献"] }
+        { title: "处理要求", items: ["为每个核心概念扩展同义词、缩写、全称、旧称、商品名/设备名和技术变体", "生成 PubMed / Europe PMC / 中文数据库检索式", "兼顾查全率和查准率，减少漏检和无关文献"] }
       ]
     }),
     search_abstracts: () => ({
@@ -782,9 +782,13 @@ function buildStepArtifact(type, project, detail) {
           { "维度": "C 对照", "内容": "常规护理、标准治疗、安慰剂或无干预" },
           { "维度": "O 结局", "内容": "主要结局、次要结局、安全性、依从性、成本" }
         ] },
-        { title: "扩展关键词", items: ["telemedicine / remote care / digital health / mHealth", "artificial intelligence / machine learning / decision support", "randomized controlled trial / cohort / systematic review", "中文：远程医疗、数字健康、移动健康、人工智能、临床决策支持"] },
-        { title: "PubMed 检索式", code: '("telemedicine"[Title/Abstract] OR "digital health"[Title/Abstract] OR "mHealth"[Title/Abstract] OR "artificial intelligence"[Title/Abstract]) AND ("intervention"[Title/Abstract] OR "management"[Title/Abstract]) AND ("outcome"[Title/Abstract] OR "effectiveness"[Title/Abstract])' },
-        { title: "中文数据库检索式", code: "(远程医疗 OR 数字健康 OR 移动健康 OR 人工智能 OR 临床决策支持) AND (干预 OR 管理 OR 治疗) AND (效果 OR 结局 OR 证据)" }
+        { title: "按概念扩展的检索词", rows: [
+          { "概念": "不可逆电穿孔", "角色": "I", "英文扩展": "irreversible electroporation; IRE; pulsed electric field; PEF; electric field ablation; electrical field ablation; NanoKnife; steep pulse", "中文扩展": "不可逆电穿孔；陡脉冲；脉冲电场；电场消融；脉冲电场消融；纳米刀", "MeSH/主题词": "Electroporation; Ablation Techniques" },
+          { "概念": "胰腺癌", "角色": "P", "英文扩展": "pancreatic cancer; pancreatic neoplasm; pancreatic carcinoma; pancreas cancer; pancreatic ductal adenocarcinoma; PDAC", "中文扩展": "胰腺癌；胰腺肿瘤；胰腺恶性肿瘤；胰腺导管腺癌", "MeSH/主题词": "Pancreatic Neoplasms" }
+        ] },
+        { title: "扩展关键词", items: ["irreversible electroporation / IRE / pulsed electric field / PEF / electric field ablation / NanoKnife", "不可逆电穿孔 / 陡脉冲 / 脉冲电场 / 电场消融 / 脉冲电场消融 / 纳米刀", "pancreatic neoplasms / pancreatic cancer / pancreatic carcinoma / PDAC", "胰腺癌 / 胰腺肿瘤 / 胰腺恶性肿瘤 / 胰腺导管腺癌"] },
+        { title: "PubMed 检索式", code: '(("irreversible electroporation"[Title/Abstract] OR IRE[Title/Abstract] OR "pulsed electric field"[Title/Abstract] OR PEF[Title/Abstract] OR "electric field ablation"[Title/Abstract] OR "NanoKnife"[Title/Abstract] OR "Electroporation"[MeSH Terms]) AND ("Pancreatic Neoplasms"[MeSH Terms] OR "pancreatic cancer"[Title/Abstract] OR "pancreatic neoplasm*"[Title/Abstract] OR "pancreatic carcinoma"[Title/Abstract] OR PDAC[Title/Abstract]))' },
+        { title: "中文数据库检索式", code: "(不可逆电穿孔 OR IRE OR 陡脉冲 OR 脉冲电场 OR 电场消融 OR 脉冲电场消融 OR 纳米刀) AND (胰腺癌 OR 胰腺肿瘤 OR 胰腺恶性肿瘤 OR 胰腺导管腺癌)" }
       ]
     }),
     search_abstracts: () => ({
