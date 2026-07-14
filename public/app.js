@@ -1,4 +1,4 @@
-const APP_VERSION = "2026.07.14.10";
+const APP_VERSION = "2026.07.14.11";
 
 const state = {
   usage: null,
@@ -486,7 +486,7 @@ function bindEvents() {
 }
 
 function updateBanner() {
-  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>检索摘要已改为 PubMed + Europe PMC 双源真实检索，并会在严格组合命中过少时自动放宽策略。</span></div><button data-action="dismiss-update">知道了</button></div>';
+  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>检索摘要首批保存提升到 100 条以内，PubMed 增加镜像兜底，长摘要列表默认收起。</span></div><button data-action="dismiss-update">知道了</button></div>';
 }
 
 function mobileTabbar() {
@@ -686,7 +686,13 @@ function renderArtifactLike(artifact) {
     const code = section.code ? `<pre>${escapeHtml(section.code)}</pre>` : "";
     const items = section.items?.length ? `<ul>${section.items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : "";
     const rows = section.rows?.length ? miniTable(section.rows) : "";
-    return `<section class="artifact-section"><h3>${escapeHtml(section.title)}</h3>${section.body ? `<p>${escapeHtml(section.body)}</p>` : ""}${items}${rows}${code}</section>`;
+    const body = `${section.body ? `<p>${escapeHtml(section.body)}</p>` : ""}${items}${rows}${code}`;
+    const rowCount = section.rows?.length || 0;
+    const shouldCollapse = rowCount > 8 || /摘要|题录|清单|队列|候选|素材/.test(section.title || "");
+    if (shouldCollapse) {
+      return `<details class="artifact-section artifact-section-collapsible"><summary><span>${escapeHtml(section.title)}</span><small>${rowCount ? `${rowCount} 条，点击展开` : "点击展开"}</small></summary>${body}</details>`;
+    }
+    return `<section class="artifact-section"><h3>${escapeHtml(section.title)}</h3>${body}</section>`;
   }).join("");
   return `${artifact.summary ? `<p>${escapeHtml(artifact.summary)}</p>` : ""}${sections}`;
 }

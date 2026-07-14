@@ -3,6 +3,8 @@ import { json, nowIso, randomId, readJson, requireDb, safeText } from "../../../
 import { recordUsage } from "../../../_lib/resources.js";
 
 const DEEPSEEK_KEY = "provider:deepseek_api_key";
+const ABSTRACT_BATCH_LIMIT = 100;
+const SOURCE_PAGE_LIMIT = 50;
 const STEP_TYPES = new Set([
   "expand_query",
   "search_abstracts",
@@ -86,7 +88,7 @@ async function runSearchAbstracts(context) {
   const primaryHitSources = new Set();
 
   for (const plan of plans) {
-    if (records.length >= 20 && plan.kind !== "primary") continue;
+    if (records.length >= ABSTRACT_BATCH_LIMIT) break;
     if (plan.kind !== "primary" && primaryHitSources.has(plan.source)) continue;
     let result = { total: 0, records: [], error: "" };
     try {
@@ -103,14 +105,14 @@ async function runSearchAbstracts(context) {
       seen.add(key);
       records.push(record);
       used += 1;
-      if (records.length >= 30) break;
+      if (records.length >= ABSTRACT_BATCH_LIMIT) break;
     }
     stats.push({
       "来源": plan.source,
       "策略": plan.label,
       "命中总数": result.error ? "失败" : String(result.total),
       "本次采用": String(used),
-      "说明": result.error || (used ? "已合并去重" : "未新增")
+      "说明": result.error || result.note || (used ? "已合并去重" : "未新增")
     });
     if (plan.kind === "primary" && result.total > 0) primaryHitSources.add(plan.source);
   }
@@ -128,7 +130,7 @@ async function runSearchAbstracts(context) {
   return {
     type: context.type,
     status: "completed",
-    summary: `已真实检索 PubMed 和 Europe PMC，合并去重获得 ${records.length} 条摘要，新增 ${inserted} 条题录。${fallbackUsed ? "严格组合命中过少时已自动放宽检索，避免漏检。" : ""}`,
+    summary: `已真实检索 PubMed 和 Europe PMC，本批合并去重保存 ${records.length} 条摘要，新增 ${inserted} 条题录。${fallbackUsed ? "严格组合命中过少时已自动放宽检索，避免漏检。" : ""}`,
     data: { pubmedQuery: pubmedPrimary, europePmcQuery: europePrimary, count: records.length, inserted, pubmedCount, europePmcCount: europeCount, stats },
     sections: [
       { title: "PubMed 检索式", code: pubmedPrimary },
@@ -296,23 +298,29 @@ async function deepseekJson(apiKey, prompt) {
 
 async function searchPubMed(query, pageSize) {
   const clean = normalizeQuery(query).slice(0, 1200) || "systematic review";
-  const searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&retmode=json&retmax=${pageSize}&sort=relevance&term=${encodeURIComponent(clean)}`;
-  const searchResponse = await fetch(searchUrl, { headers: { Accept: "application/json" } });
-  if (!searchResponse.ok) throw new Error(`PubMed 检索失败：${searchResponse.status}`);
-  const searchData = await searchResponse.json();
-  const ids = searchData.esearchresult?.idlist || [];
-  const total = Number(searchData.esearchresult?.count || 0) || ids.length;
-  if (!ids.length) return { total, records: [] };
+  try {
+    const searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&retmode=json&retmax=${pageSize}&sort=relevance&tool=literature_evidence_pwa&email=anonymous@example.com&term=${encodeURIComponent(clean)}`;
+    const searchResponse = await fetch(searchUrl, { headers: { Accept: "application/json", "User-Agent": "literature-evidence-pwa/0.3" } });
+    if (!searchResponse.ok) throw new Error(`PubMed 检索失败：${searchResponse.status}`);
+    const searchData = await searchResponse.json();
+    const ids = searchData.esearchresult?.idlist || [];
+    const total = Number(searchData.esearchresult?.count || 0) || ids.length;
+    if (!ids.length) return { total, records: [] };
 
-  const fetchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&retmode=xml&id=${ids.join(",")}`;
-  const fetchResponse = await fetch(fetchUrl, { headers: { Accept: "application/xml" } });
-  if (!fetchResponse.ok) throw new Error(`PubMed 摘要读取失败：${fetchResponse.status}`);
-  const xml = await fetchResponse.text();
-  const records = [...xml.matchAll(/<PubmedArticle\b[\s\S]*?<\/PubmedArticle>/g)].map((match) => parsePubMedArticle(match[0])).filter((item) => item.title);
-  return { total, records };
+    const fetchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&retmode=xml&tool=literature_evidence_pwa&email=anonymous@example.com&id=${ids.join(",")}`;
+    const fetchResponse = await fetch(fetchUrl, { headers: { Accept: "application/xml", "User-Agent": "literature-evidence-pwa/0.3" } });
+    if (!fetchResponse.ok) throw new Error(`PubMed 摘要读取失败：${fetchResponse.status}`);
+    const xml = await fetchResponse.text();
+    const records = [...xml.matchAll(/<PubmedArticle\b[\s\S]*?<\/PubmedArticle>/g)].map((match) => parsePubMedArticle(match[0])).filter((item) => item.title);
+    return { total, records };
+  } catch (error) {
+    const mirrorQuery = `SRC:MED AND ${normalizeEuropeQuery(clean)}`;
+    const mirrored = await searchEuropePmc(mirrorQuery, pageSize, "PubMed");
+    return { ...mirrored, note: `NCBI 直连失败，已使用 Europe PMC 的 PubMed/MED 镜像：${error.message}` };
+  }
 }
 
-async function searchEuropePmc(query, pageSize) {
+async function searchEuropePmc(query, pageSize, sourceLabel = "Europe PMC") {
   const clean = normalizeQuery(query).slice(0, 900) || "systematic review";
   const url = `https://www.ebi.ac.uk/europepmc/webservices/rest/search?format=json&resultType=core&pageSize=${pageSize}&query=${encodeURIComponent(clean)}`;
   const response = await fetch(url, { headers: { Accept: "application/json" } });
@@ -323,7 +331,7 @@ async function searchEuropePmc(query, pageSize) {
     doi: safeText(item.doi),
     pmid: safeText(item.pmid),
     pmcid: safeText(item.pmcid),
-    source: "Europe PMC",
+    source: sourceLabel,
     year: Number(item.pubYear || 0) || null,
     journal: safeText(item.journalTitle).slice(0, 200),
     abstract: safeText(item.abstractText).replace(/<[^>]+>/g, " ").slice(0, 4000)
@@ -346,15 +354,15 @@ function buildSearchPlans(project, latest) {
   const fallbackEurope = latest?.data?.queries?.europePmc || buildEuropeClause(broad);
   const plans = [];
 
-  if (pubmedP && pubmedI) plans.push({ source: "PubMed", kind: "primary", label: "PICO 组合", query: `${pubmedP} AND ${pubmedI}`, limit: 15 });
-  plans.push({ source: "PubMed", kind: "fallback", label: "AI 原始式/宽检索", query: normalizePubMedQuery(fallbackPubmed), limit: 15 });
-  if (pubmedP) plans.push({ source: "PubMed", kind: "fallback", label: "人群/疾病", query: pubmedP, limit: 10 });
-  if (pubmedI) plans.push({ source: "PubMed", kind: "fallback", label: "干预/技术", query: pubmedI, limit: 10 });
+  if (pubmedP && pubmedI) plans.push({ source: "PubMed", kind: "primary", label: "PICO 组合", query: `${pubmedP} AND ${pubmedI}`, limit: SOURCE_PAGE_LIMIT });
+  plans.push({ source: "PubMed", kind: "fallback", label: "AI 原始式/宽检索", query: normalizePubMedQuery(fallbackPubmed), limit: SOURCE_PAGE_LIMIT });
+  if (pubmedP) plans.push({ source: "PubMed", kind: "fallback", label: "人群/疾病", query: pubmedP, limit: 25 });
+  if (pubmedI) plans.push({ source: "PubMed", kind: "fallback", label: "干预/技术", query: pubmedI, limit: 25 });
 
-  if (europeP && europeI) plans.push({ source: "Europe PMC", kind: "primary", label: "PICO 组合", query: `${europeP} AND ${europeI}`, limit: 15 });
-  plans.push({ source: "Europe PMC", kind: "fallback", label: "AI 原始式/宽检索", query: normalizeEuropeQuery(fallbackEurope), limit: 15 });
-  if (europeP) plans.push({ source: "Europe PMC", kind: "fallback", label: "人群/疾病", query: europeP, limit: 10 });
-  if (europeI) plans.push({ source: "Europe PMC", kind: "fallback", label: "干预/技术", query: europeI, limit: 10 });
+  if (europeP && europeI) plans.push({ source: "Europe PMC", kind: "primary", label: "PICO 组合", query: `${europeP} AND ${europeI}`, limit: SOURCE_PAGE_LIMIT });
+  plans.push({ source: "Europe PMC", kind: "fallback", label: "AI 原始式/宽检索", query: normalizeEuropeQuery(fallbackEurope), limit: SOURCE_PAGE_LIMIT });
+  if (europeP) plans.push({ source: "Europe PMC", kind: "fallback", label: "人群/疾病", query: europeP, limit: 25 });
+  if (europeI) plans.push({ source: "Europe PMC", kind: "fallback", label: "干预/技术", query: europeI, limit: 25 });
 
   return dedupePlans(plans);
 }
