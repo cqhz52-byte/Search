@@ -4,6 +4,8 @@ import { recordUsage } from "../../../_lib/resources.js";
 
 const DEEPSEEK_KEY = "provider:deepseek_api_key";
 const ABSTRACT_BATCH_LIMIT = 100;
+const ANALYZE_ABSTRACT_LIMIT = 100;
+const ABSTRACT_SNIPPET_LIMIT = 600;
 const SOURCE_PAGE_LIMIT = 50;
 const STEP_TYPES = new Set([
   "expand_query",
@@ -136,6 +138,7 @@ async function runSearchAbstracts(context) {
       { title: "PubMed 检索式", code: pubmedPrimary },
       { title: "Europe PMC 检索式", code: europePrimary },
       { title: "检索统计", rows: stats },
+      { title: "合并去重规则", body: "本步骤不是用 AI 去重，而是程序确定性去重：先按 PMID，再按 PMCID、DOI，最后按题名小写匹配。PubMed 先入库，Europe PMC 后合并；重复题录只保留一条。" },
       { title: "摘要结果", rows }
     ]
   };
@@ -143,17 +146,29 @@ async function runSearchAbstracts(context) {
 
 async function runAnalyzeAbstracts(context) {
   const key = await getDeepseekKey(context.db);
-  const literature = await getLiterature(context.db, context.project.id, 20);
+  const literature = await getLiterature(context.db, context.project.id, ANALYZE_ABSTRACT_LIMIT);
   if (!literature.length) return emptyArtifact(context.type, "还没有题录，请先执行“检索摘要”。");
-  const compact = literature.map((item) => ({ id: item.id, title: item.title, abstract: item.abstract, year: item.year, source: item.source }));
+  const compact = literature.map((item, index) => ({
+    id: item.id,
+    no: index + 1,
+    title: item.title,
+    abstract: safeText(item.abstract).slice(0, ABSTRACT_SNIPPET_LIMIT),
+    year: item.year,
+    source: item.source
+  }));
   const prompt = [
     "你是系统综述初筛助手。请仅输出 JSON。",
     "JSON schema: {\"decisions\":[{\"id\":\"\",\"decision\":\"include|maybe|exclude\",\"reason\":\"\"}],\"summary\":\"\"}",
+    "必须逐条分析输入的每一篇摘要，并为每一个 id 返回一条 decisions 记录。不要漏掉 id。",
+    "判断标准：include=明显符合研究问题；maybe=可能相关但摘要信息不足；exclude=主题、对象、干预或研究类型明显不符。",
     `研究问题：${context.project.question || context.project.title}`,
-    `题录摘要：${JSON.stringify(compact).slice(0, 12000)}`
+    `本批待筛摘要数量：${compact.length}`,
+    `题录摘要：${JSON.stringify(compact).slice(0, 70000)}`
   ].join("\n");
   const data = await deepseekJson(key, prompt);
   const decisions = Array.isArray(data.decisions) ? data.decisions : [];
+  const returnedIds = new Set(decisions.map((item) => safeText(item.id)).filter(Boolean));
+  const missingRows = compact.filter((item) => !returnedIds.has(item.id));
   for (const decision of decisions) {
     const status = ["include", "maybe", "exclude"].includes(decision.decision) ? decision.decision : "maybe";
     await context.db.prepare("UPDATE literature SET screening_status = ?, updated_at = ? WHERE id = ? AND project_id = ?")
@@ -163,10 +178,12 @@ async function runAnalyzeAbstracts(context) {
   return {
     type: context.type,
     status: "completed",
-    summary: data.summary || `DeepSeek 已真实分析 ${decisions.length} 条摘要。`,
-    data,
+    summary: data.summary || `DeepSeek 已真实分析 ${compact.length} 条摘要，返回 ${decisions.length} 条判断。`,
+    data: { ...data, analyzedCount: compact.length, returnedCount: decisions.length, missingCount: missingRows.length },
     sections: [
-      { title: "AI 初筛判断", rows: decisions.map((item) => ({ "题录ID": item.id, "判断": item.decision, "理由": item.reason || "" })) }
+      { title: "分析范围", rows: [{ "本批输入摘要": compact.length, "AI 返回判断": decisions.length, "未返回判断": missingRows.length }] },
+      { title: "AI 初筛判断", rows: decisions.map((item) => ({ "题录ID": item.id, "判断": item.decision, "理由": item.reason || "" })) },
+      ...(missingRows.length ? [{ title: "未返回判断的题录", rows: missingRows.map((item) => ({ "题录ID": item.id, "题名": item.title, "来源": item.source || "-" })) }] : [])
     ]
   };
 }
@@ -282,6 +299,7 @@ async function deepseekJson(apiKey, prompt) {
     body: JSON.stringify({
       model: "deepseek-chat",
       temperature: 0.2,
+      max_tokens: 8000,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: "你只输出合法 JSON，不输出 Markdown。" },

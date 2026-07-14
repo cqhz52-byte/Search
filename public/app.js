@@ -1,4 +1,4 @@
-const APP_VERSION = "2026.07.14.11";
+const APP_VERSION = "2026.07.14.12";
 
 const state = {
   usage: null,
@@ -241,6 +241,7 @@ function completeLocalStep(job) {
   const project = detail?.project || state.projects.find((item) => item.id === job.project_id) || {};
   writeStepArtifact(job.project_id, job.type, buildStepArtifact(job.type, project, detail));
   if (detail) applyArtifactToDetail(job.type, detail);
+  state.activeStepDetail = { projectId: job.project_id, type: job.type, view: "result" };
 }
 
 function executionPanel() {
@@ -284,7 +285,7 @@ async function refresh(nextSelectedId = state.selectedId) {
   }
 }
 
-async function runAction(label, action, key = label) {
+async function runAction(label, action, key = label, options = {}) {
   state.busy[key] = label;
   const minimumVisible = new Promise((resolve) => setTimeout(resolve, 700));
   state.message = `${label}...`;
@@ -298,6 +299,9 @@ async function runAction(label, action, key = label) {
     const released = result?.releasedBytes ? `\uff0c\u91ca\u653e ${formatBytes(result.releasedBytes)}` : "";
     state.message = result?.job?.local && result.job.status === "running" ? `${label}\u5df2\u5f00\u59cb\uff0c\u5b8c\u6210\u540e\u4f1a\u751f\u6210\u6b65\u9aa4\u7ed3\u679c` : `${label}\u5b8c\u6210${released}`;
     await refresh(state.selectedId);
+    if (options.openStepResult && result?.job && result.job.status !== "running") {
+      openStepDetail(options.projectId || result.job.project_id || result.job.projectId, options.type || result.job.type, "result");
+    }
   } catch (error) {
     state.message = error.message || `${label}\u5931\u8d25`;
     render();
@@ -434,7 +438,11 @@ function bindEvents() {
   }));
   document.querySelectorAll("[data-job-type]").forEach((button) => button.addEventListener("click", () => {
     const key = `job:${button.dataset.projectId}:${button.dataset.jobType}`;
-    runAction(`\u542f\u52a8${jobLabels[button.dataset.jobType]}`, () => createPipelineJob(button.dataset.projectId, button.dataset.jobType), key);
+    runAction(`\u542f\u52a8${jobLabels[button.dataset.jobType]}`, () => createPipelineJob(button.dataset.projectId, button.dataset.jobType), key, {
+      openStepResult: true,
+      projectId: button.dataset.projectId,
+      type: button.dataset.jobType
+    });
   }));
   document.querySelectorAll("[data-job-action]").forEach((button) => button.addEventListener("click", () => {
     const action = button.dataset.jobAction === "pause" ? Api.pauseJob : Api.resumeJob;
@@ -486,7 +494,7 @@ function bindEvents() {
 }
 
 function updateBanner() {
-  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>检索摘要首批保存提升到 100 条以内，PubMed 增加镜像兜底，长摘要列表默认收起。</span></div><button data-action="dismiss-update">知道了</button></div>';
+  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>摘要分析扩展到最多 100 篇，步骤完成后自动打开结果页，并补充检索去重规则说明。</span></div><button data-action="dismiss-update">知道了</button></div>';
 }
 
 function mobileTabbar() {
