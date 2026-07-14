@@ -180,7 +180,39 @@ button.danger { border-color: #ffd0cc; background: var(--danger-bg); color: var(
 .trash-row, .user-row, .job-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: white; }
 .job-row > div:first-child { flex: 1; min-width: 180px; }
 .job-progress { margin-top: 8px; }
-.create-form, .user-form { display: grid; gap: 8px; width: min(360px, 100%); }
+.create-form, .user-form, .settings-form { display: grid; gap: 8px; width: min(360px, 100%); }
+.settings-form {
+  width: 100%;
+  margin-bottom: 14px;
+  border: 1px solid #c7efe5;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fbfffd;
+}
+.settings-form strong,
+.settings-form small {
+  display: block;
+}
+.settings-form small {
+  margin-top: 3px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+.settings-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 850;
+}
+.settings-status {
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  color: #31554b;
+  font-size: 13px;
+  font-weight: 900;
+}
 input, textarea { width: 100%; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--ink); padding: 10px 11px; }
 select { min-height: 40px; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--ink); padding: 0 10px; }
 textarea { min-height: 86px; resize: vertical; }

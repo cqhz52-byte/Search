@@ -1,10 +1,11 @@
-const APP_VERSION = "2026.07.14.6";
+const APP_VERSION = "2026.07.14.7";
 
 const state = {
   usage: null,
   projects: [],
   trash: [],
   users: [],
+  settings: null,
   detail: null,
   selectedId: "",
   message: "",
@@ -78,6 +79,8 @@ const Api = {
   permanentDelete: (id) => api(`/api/trash/${id}/permanent`, { method: "DELETE" })
   ,
   users: () => api("/api/admin/users"),
+  settings: () => api("/api/admin/settings"),
+  saveSettings: (payload) => api("/api/admin/settings", { method: "POST", body: JSON.stringify(payload) }),
   saveUser: (payload) => api("/api/admin/users", { method: "POST", body: JSON.stringify(payload) }),
   deleteUser: (phone) => api(`/api/admin/users?phone=${encodeURIComponent(phone)}`, { method: "DELETE" })
 };
@@ -240,16 +243,18 @@ async function refresh(nextSelectedId = state.selectedId) {
   state.loading = true;
   render();
   try {
-    const [usageData, projectData, trashData, userData] = await Promise.all([
+    const [usageData, projectData, trashData, userData, settingsData] = await Promise.all([
       Api.resourceUsage(),
       Api.projects(),
       Api.projects(true),
-      Api.users().catch(() => ({ users: [] }))
+      Api.users().catch(() => ({ users: [] })),
+      Api.settings().catch(() => ({ settings: null }))
     ]);
     state.usage = usageData;
     state.projects = projectData.projects || [];
     state.trash = trashData.projects || [];
     state.users = userData.users || [];
+    state.settings = settingsData.settings || null;
     state.selectedId = nextSelectedId || state.projects[0]?.id || "";
     state.detail = state.selectedId ? mergeLocalJobs(await Api.project(state.selectedId)) : null;
   } catch (error) {
@@ -348,6 +353,7 @@ function render() {
 
         <section class="users-panel mobile-tab-panel ${state.mobileTab === "manage" ? "is-active" : ""}">
           ${sectionTitle("users", "授权用户", userFormMarkup())}
+          ${settingsMarkup()}
           <div class="user-list">
             ${state.users.length ? state.users.map(userRow).join("") : empty("管理员登录后可管理授权用户。")}
           </div>
@@ -418,6 +424,14 @@ function bindEvents() {
   document.querySelectorAll("[data-delete-user]").forEach((button) => button.addEventListener("click", () => {
     runAction("\u5220\u9664\u6388\u6743\u7528\u6237", () => Api.deleteUser(button.dataset.deleteUser), `user:delete:${button.dataset.deleteUser}`);
   }));
+  document.querySelector("[data-settings-form]")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    await runAction("保存 DeepSeek API Key", () => Api.saveSettings({ deepseekApiKey: form.get("deepseekApiKey") }), "settings:deepseek");
+  });
+  document.querySelector("[data-clear-deepseek]")?.addEventListener("click", () => {
+    runAction("清除 DeepSeek API Key", () => Api.saveSettings({ clearDeepseek: true }), "settings:deepseek:clear");
+  });
   document.querySelector("[data-login-form]")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -510,6 +524,26 @@ function projectActions(project) {
     <button class="secondary" data-project-action="archive" data-project-id="${escapeAttr(project.id)}" ${busyAttr(archiveKey)}>${busyIcon("archive", archiveKey)} ${isBusy(archiveKey) ? "\u5f52\u6863\u4e2d" : "\u5f52\u6863"}</button>
     <button class="danger" data-project-action="delete" data-project-id="${escapeAttr(project.id)}" ${busyAttr(deleteKey)}>${busyIcon("trash", deleteKey)} ${isBusy(deleteKey) ? "\u5220\u9664\u4e2d" : "\u5220\u9664"}</button>
   </div>`;
+}
+
+function settingsMarkup() {
+  const deepseek = state.settings?.deepseek || {};
+  const status = deepseek.configured ? `已配置 · 末尾 ${deepseek.last4 || "****"}` : "未配置";
+  const updated = deepseek.updatedAt ? ` · ${formatDateTime(deepseek.updatedAt)}` : "";
+  return `<form class="settings-form" data-settings-form>
+    <div>
+      <strong>AI 服务配置</strong>
+      <small>DeepSeek API Key 保存在服务器 D1，不会回填到浏览器。</small>
+    </div>
+    <label>DeepSeek API Key
+      <input name="deepseekApiKey" type="password" autocomplete="off" placeholder="sk-..." required>
+    </label>
+    <div class="settings-status">${escapeHtml(status + updated)}</div>
+    <div class="row-actions">
+      <button type="submit" ${busyAttr("settings:deepseek")}>${busyIcon("file", "settings:deepseek")} 保存 Key</button>
+      <button class="secondary" type="button" data-clear-deepseek ${busyAttr("settings:deepseek:clear")}>${busyIcon("trash", "settings:deepseek:clear")} 清除</button>
+    </div>
+  </form>`;
 }
 
 function workflowCards(detail) {
@@ -1003,6 +1037,21 @@ function demoResponse(path, options = {}) {
     };
   }
   if (path.startsWith("/api/projects")) return { projects: [{ id: "prj_demo", title: "糖尿病远程干预证据综述", status: "active", literature_count: 286, bytes: 17825792 }] };
+  if (path.startsWith("/api/admin/settings")) {
+    if (options.method === "POST") {
+      const body = options.body ? JSON.parse(options.body) : {};
+      if (body.clearDeepseek) {
+        localStorage.removeItem("lit_demo_deepseek_last4");
+        localStorage.removeItem("lit_demo_deepseek_updated");
+      } else {
+        const key = String(body.deepseekApiKey || "");
+        localStorage.setItem("lit_demo_deepseek_last4", key.slice(-4));
+        localStorage.setItem("lit_demo_deepseek_updated", new Date().toISOString());
+      }
+    }
+    const last4 = localStorage.getItem("lit_demo_deepseek_last4") || "";
+    return { ok: true, settings: { deepseek: { configured: Boolean(last4), last4, updatedAt: localStorage.getItem("lit_demo_deepseek_updated") || "" } } };
+  }
   if (path.startsWith("/api/admin/users")) return { users: [{ id: "usr_demo", phone: "admin", name: "超级管理员", role: "super_admin", enabled: 1 }] };
   return { ok: true, project: { id: "prj_demo", title: "新证据项目", status: "active" }, job: { id: `job_${Date.now()}`, type: "expand_query", status: "queued" }, releasedBytes: 1048576, deletedCount: 1 };
 }
