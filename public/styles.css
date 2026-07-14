@@ -464,12 +464,65 @@ textarea { min-height: 86px; resize: vertical; }
   border: 1px solid var(--line);
   border-radius: 8px;
 }
+.mini-card-list {
+  display: none;
+}
 .mini-table table {
   min-width: 520px;
 }
 .mini-table th,
 .mini-table td {
   font-size: 12px;
+}
+.mini-card-row {
+  display: grid;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
+  padding: 12px;
+  background: white;
+}
+.mini-card-row:last-child {
+  border-bottom: 0;
+}
+.mini-card-row header strong {
+  display: block;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.35;
+}
+.mini-card-field {
+  display: grid;
+  gap: 3px;
+}
+.mini-card-field span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+}
+.mini-card-field p {
+  margin: 0;
+  color: #263a34;
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+.screening-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.screening-current {
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 850;
+}
+.screening-actions button {
+  min-height: 38px;
+  justify-content: center;
+  padding: 0 8px;
 }
 .step-number {
   width: 28px;
@@ -597,6 +650,18 @@ td strong { display: block; max-width: 440px; }
   .desktop-panel { display: none; }
   .mobile-tab-panel { display: none; }
   .mobile-tab-panel.is-active { display: block; }
+  .mini-table {
+    overflow: visible;
+  }
+  .mini-table table {
+    display: none;
+  }
+  .mini-card-list {
+    display: grid;
+  }
+  .table-wrap table {
+    min-width: 600px;
+  }
   .mobile-tabbar {
     position: fixed;
     left: 10px;

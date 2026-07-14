@@ -1,4 +1,4 @@
-const APP_VERSION = "2026.07.14.12";
+const APP_VERSION = "2026.07.14.13";
 
 const state = {
   usage: null,
@@ -69,6 +69,7 @@ const Api = {
   createProject: (title, question) => api("/api/projects", { method: "POST", body: JSON.stringify({ title, question }) }),
   project: (id) => api(`/api/projects/${id}`),
   updateProject: (id, payload) => api(`/api/projects/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
+  updateScreening: (id, status) => api(`/api/literature/${id}/screening`, { method: "POST", body: JSON.stringify({ status }) }),
   runStep: (projectId, type) => api(`/api/projects/${projectId}/run-step`, { method: "POST", body: JSON.stringify({ type }) }),
   archiveProject: (id) => api(`/api/projects/${id}/archive`, { method: "POST" }),
   deleteProject: (id) => api(`/api/projects/${id}`, { method: "DELETE" }),
@@ -444,6 +445,18 @@ function bindEvents() {
       type: button.dataset.jobType
     });
   }));
+  document.querySelectorAll("[data-screening-lit]").forEach((button) => button.addEventListener("click", () => {
+    const litId = button.dataset.screeningLit;
+    const status = button.dataset.screeningStatus;
+    runAction("更新初筛判断", async () => {
+      const result = await Api.updateScreening(litId, status);
+      if (state.detail?.literature) {
+        const item = state.detail.literature.find((row) => row.id === litId);
+        if (item) item.screening_status = status;
+      }
+      return result;
+    }, `screening:${litId}:${status}`);
+  }));
   document.querySelectorAll("[data-job-action]").forEach((button) => button.addEventListener("click", () => {
     const action = button.dataset.jobAction === "pause" ? Api.pauseJob : Api.resumeJob;
     const label = button.dataset.jobAction === "pause" ? "\u6682\u505c\u4efb\u52a1" : "\u6062\u590d\u4efb\u52a1";
@@ -494,7 +507,7 @@ function bindEvents() {
 }
 
 function updateBanner() {
-  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>摘要分析扩展到最多 100 篇，步骤完成后自动打开结果页，并补充检索去重规则说明。</span></div><button data-action="dismiss-update">知道了</button></div>';
+  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>手机端结果改为卡片式；AI 摘要分析显示中文摘要并支持手工纳入/待定/排除；PDF 下载增加 PMC 多地址兜底。</span></div><button data-action="dismiss-update">知道了</button></div>';
 }
 
 function mobileTabbar() {
@@ -716,7 +729,27 @@ function miniTable(rows) {
   if (!keys.length) return "";
   return `<div class="mini-table"><table><thead><tr>${keys.map((key) => `<th>${escapeHtml(key)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) =>
     `<tr>${keys.map((key) => `<td>${escapeHtml(row[key])}</td>`).join("")}</tr>`
-  ).join("")}</tbody></table></div>`;
+  ).join("")}</tbody></table><div class="mini-card-list">${rows.map((row) => miniCard(row, keys)).join("")}</div></div>`;
+}
+
+function miniCard(row, keys) {
+  const title = row["题名"] || row["文献"] || row["题录ID"] || row["PMCID"] || keys.map((key) => row[key]).find(Boolean) || "记录";
+  const body = keys
+    .filter((key) => row[key] !== title)
+    .map((key) => `<div class="mini-card-field"><span>${escapeHtml(key)}</span><p>${escapeHtml(row[key] || "-")}</p></div>`)
+    .join("");
+  return `<article class="mini-card-row"><header><strong>${escapeHtml(title)}</strong></header>${body}${screeningControls(row)}</article>`;
+}
+
+function screeningControls(row) {
+  const litId = row["题录ID"] || row.id || "";
+  if (!litId) return "";
+  const current = state.detail?.literature?.find((item) => item.id === litId)?.screening_status || "";
+  return `<div class="screening-current">当前人工状态：${escapeHtml(current ? screeningLabel(current) : "未设置")}</div><div class="screening-actions">
+    <button data-screening-lit="${escapeAttr(litId)}" data-screening-status="include">纳入</button>
+    <button class="secondary" data-screening-lit="${escapeAttr(litId)}" data-screening-status="maybe">待定</button>
+    <button class="secondary" data-screening-lit="${escapeAttr(litId)}" data-screening-status="exclude">排除</button>
+  </div>`;
 }
 
 function buildStepInput(type, detail) {
@@ -1136,6 +1169,10 @@ function demoResponse(path, options = {}) {
     return { ok: true, settings: { deepseek: { configured: Boolean(last4), last4, updatedAt: localStorage.getItem("lit_demo_deepseek_updated") || "" } } };
   }
   if (path.startsWith("/api/admin/users")) return { users: [{ id: "usr_demo", phone: "admin", name: "超级管理员", role: "super_admin", enabled: 1 }] };
+  if (path.startsWith("/api/literature/")) {
+    const status = options.body ? JSON.parse(options.body).status : "maybe";
+    return { ok: true, id: path.split("/")[3], projectId: "prj_demo", status, updatedAt: new Date().toISOString() };
+  }
   return { ok: true, project: { id: "prj_demo", title: "新证据项目", status: "active" }, job: { id: `job_${Date.now()}`, type: "expand_query", status: "queued" }, releasedBytes: 1048576, deletedCount: 1 };
 }
 

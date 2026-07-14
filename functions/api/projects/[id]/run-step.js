@@ -158,8 +158,9 @@ async function runAnalyzeAbstracts(context) {
   }));
   const prompt = [
     "你是系统综述初筛助手。请仅输出 JSON。",
-    "JSON schema: {\"decisions\":[{\"id\":\"\",\"decision\":\"include|maybe|exclude\",\"reason\":\"\"}],\"summary\":\"\"}",
+    "JSON schema: {\"decisions\":[{\"id\":\"\",\"decision\":\"include|maybe|exclude\",\"reason\":\"\",\"chineseAbstract\":\"\"}],\"summary\":\"\"}",
     "必须逐条分析输入的每一篇摘要，并为每一个 id 返回一条 decisions 记录。不要漏掉 id。",
+    "chineseAbstract 字段请用中文概括该摘要的研究对象、干预/暴露、主要结局和限制，便于手机端快速阅读。",
     "判断标准：include=明显符合研究问题；maybe=可能相关但摘要信息不足；exclude=主题、对象、干预或研究类型明显不符。",
     `研究问题：${context.project.question || context.project.title}`,
     `本批待筛摘要数量：${compact.length}`,
@@ -182,7 +183,17 @@ async function runAnalyzeAbstracts(context) {
     data: { ...data, analyzedCount: compact.length, returnedCount: decisions.length, missingCount: missingRows.length },
     sections: [
       { title: "分析范围", rows: [{ "本批输入摘要": compact.length, "AI 返回判断": decisions.length, "未返回判断": missingRows.length }] },
-      { title: "AI 初筛判断", rows: decisions.map((item) => ({ "题录ID": item.id, "判断": item.decision, "理由": item.reason || "" })) },
+      { title: "AI 初筛判断", rows: decisions.map((item) => {
+        const source = compact.find((row) => row.id === item.id);
+        return {
+          "题录ID": item.id,
+          "题名": source?.title || "",
+          "来源": source?.source || "",
+          "判断": item.decision,
+          "中文摘要": item.chineseAbstract || "",
+          "理由": item.reason || ""
+        };
+      }) },
       ...(missingRows.length ? [{ title: "未返回判断的题录", rows: missingRows.map((item) => ({ "题录ID": item.id, "题名": item.title, "来源": item.source || "-" })) }] : [])
     ]
   };
@@ -209,9 +220,9 @@ async function runGenerateDownloadList(context) {
 async function runDownloadPdfs(context) {
   const rows = (await getCandidateLiterature(context.db, context.project.id, 10)).filter((item) => item.pmcid);
   const results = [];
-  for (const item of rows.slice(0, 3)) {
+  for (const item of rows.slice(0, 5)) {
     const result = await tryDownloadOpenPdf(context, item);
-    results.push({ "题名": item.title, "PMCID": item.pmcid, "下载": result });
+    results.push({ "题名": item.title, "PMCID": item.pmcid, "下载": result.status, "来源URL": result.url || "-", "说明": result.note || "" });
   }
   return {
     type: context.type,
@@ -556,26 +567,65 @@ async function getCandidateLiterature(db, projectId, limit) {
 }
 
 async function tryDownloadOpenPdf(context, item) {
-  if (!context.env.LIT_R2) return "未绑定 R2，已保留下载清单";
-  const url = `https://europepmc.org/articles/${encodeURIComponent(item.pmcid)}?pdf=render`;
-  try {
-    const response = await fetch(url);
-    if (!response.ok) return `失败 ${response.status}`;
-    const size = Number(response.headers.get("content-length") || 0);
-    const max = Number(context.env.MAX_PDF_BYTES || 15728640);
-    if (size && size > max) return "超过单文件大小限制";
-    const buffer = await response.arrayBuffer();
-    if (buffer.byteLength > max) return "超过单文件大小限制";
-    const key = `pdf/${context.project.id}/${item.id}.pdf`;
-    await context.env.LIT_R2.put(key, buffer, { httpMetadata: { contentType: "application/pdf" } });
-    await context.db.prepare("INSERT OR REPLACE INTO documents (id, project_id, literature_id, r2_key, kind, purpose, size_bytes, content_type, status, created_at, last_accessed_at, expires_at) VALUES (?, ?, ?, ?, 'pdf', 'pdf', ?, 'application/pdf', 'active', ?, ?, ?)")
-      .bind(randomId("doc"), context.project.id, item.id, key, buffer.byteLength, context.now, context.now, context.now)
-      .run();
-    await context.db.prepare("UPDATE literature SET pdf_status = 'downloaded', updated_at = ? WHERE id = ?").bind(context.now, item.id).run();
-    return `已下载 ${Math.round(buffer.byteLength / 1024)} KB`;
-  } catch (error) {
-    return `失败：${error.message}`;
+  if (!context.env.LIT_R2) return { status: "未绑定 R2", note: "已保留下载清单" };
+  const max = Number(context.env.MAX_PDF_BYTES || 15728640);
+  const urls = await candidatePdfUrls(item.pmcid);
+  const failures = [];
+  for (const url of urls) {
+    try {
+      const response = await fetch(url, { headers: { Accept: "application/pdf,*/*" } });
+      if (!response.ok) {
+        failures.push(`${response.status} ${url}`);
+        continue;
+      }
+      const size = Number(response.headers.get("content-length") || 0);
+      if (size && size > max) return { status: "超过单文件大小限制", url, note: `${Math.round(size / 1024 / 1024)} MB` };
+      const buffer = await response.arrayBuffer();
+      if (buffer.byteLength > max) return { status: "超过单文件大小限制", url, note: `${Math.round(buffer.byteLength / 1024 / 1024)} MB` };
+      if (!looksLikePdf(buffer, response.headers.get("content-type") || "")) {
+        failures.push(`非 PDF ${url}`);
+        continue;
+      }
+      const key = `pdf/${context.project.id}/${item.id}.pdf`;
+      await context.env.LIT_R2.put(key, buffer, { httpMetadata: { contentType: "application/pdf" } });
+      await context.db.prepare("INSERT OR REPLACE INTO documents (id, project_id, literature_id, r2_key, kind, purpose, size_bytes, content_type, status, created_at, last_accessed_at, expires_at) VALUES (?, ?, ?, ?, 'pdf', 'pdf', ?, 'application/pdf', 'active', ?, ?, ?)")
+        .bind(randomId("doc"), context.project.id, item.id, key, buffer.byteLength, context.now, context.now, context.now)
+        .run();
+      await context.db.prepare("UPDATE literature SET pdf_status = 'downloaded', updated_at = ? WHERE id = ?").bind(context.now, item.id).run();
+      return { status: `已下载 ${Math.round(buffer.byteLength / 1024)} KB`, url, note: "已保存到 R2" };
+    } catch (error) {
+      failures.push(`${error.message} ${url}`);
+    }
   }
+  await context.db.prepare("UPDATE literature SET pdf_status = 'failed', updated_at = ? WHERE id = ?").bind(context.now, item.id).run();
+  return { status: "未找到可下载 PDF", note: failures.slice(0, 3).join("；") };
+}
+
+async function candidatePdfUrls(pmcid) {
+  const id = safeText(pmcid).replace(/^PMC/i, "PMC");
+  const urls = [];
+  try {
+    const response = await fetch(`https://www.ncbi.nlm.nih.gov/pmc/utils/oa/oa.fcgi?id=${encodeURIComponent(id)}`, { headers: { Accept: "application/xml,text/xml,*/*" } });
+    if (response.ok) {
+      const xml = await response.text();
+      for (const match of xml.matchAll(/<link\b[^>]*format=["']pdf["'][^>]*href=["']([^"']+)["']/gi)) {
+        urls.push(cleanXml(match[1]));
+      }
+    }
+  } catch {}
+  urls.push(
+    `https://europepmc.org/backend/ptpmcrender.fcgi?accid=${encodeURIComponent(id)}&blobtype=pdf`,
+    `https://pmc.ncbi.nlm.nih.gov/articles/${encodeURIComponent(id)}/pdf/`,
+    `https://www.ncbi.nlm.nih.gov/pmc/articles/${encodeURIComponent(id)}/pdf/`,
+    `https://europepmc.org/articles/${encodeURIComponent(id)}?pdf=render`
+  );
+  return [...new Set(urls.filter(Boolean))];
+}
+
+function looksLikePdf(buffer, contentType) {
+  if (String(contentType).toLowerCase().includes("application/pdf")) return true;
+  const bytes = new Uint8Array(buffer.slice(0, 5));
+  return bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46;
 }
 
 function emptyArtifact(type, summary) {
