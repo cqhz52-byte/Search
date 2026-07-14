@@ -213,6 +213,104 @@ textarea { min-height: 86px; resize: vertical; }
   font-size: 12px;
   line-height: 1.35;
 }
+.step-results {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.result-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 2px;
+}
+.result-heading strong {
+  font-size: 15px;
+}
+.result-heading span,
+.muted {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.step-result-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: white;
+}
+.step-result-card.status-completed {
+  border-color: #b9e7dc;
+  background: #fbfffd;
+}
+.step-result-card.status-running {
+  border-color: #cfe0ff;
+  background: #f6f9ff;
+}
+.step-result-card header {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+.step-result-card header strong,
+.step-result-card header small {
+  display: block;
+}
+.step-result-card header small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.step-result-card p {
+  margin: 0;
+  color: #31403b;
+  line-height: 1.55;
+}
+.artifact-section {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+.artifact-section h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 14px;
+}
+.artifact-section ul {
+  margin: 0;
+  padding-left: 18px;
+  color: #31403b;
+  line-height: 1.55;
+}
+.artifact-section pre {
+  overflow: auto;
+  margin: 0;
+  border: 1px solid #dbe5df;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f7faf8;
+  color: #1f332d;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.mini-table {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.mini-table table {
+  min-width: 520px;
+}
+.mini-table th,
+.mini-table td {
+  font-size: 12px;
+}
 .step-number {
   width: 28px;
   height: 28px;
@@ -330,6 +428,10 @@ td strong { display: block; max-width: 440px; }
     color: var(--muted);
     font-size: 12px;
     font-weight: 850;
+  }
+  .result-heading {
+    align-items: flex-start;
+    flex-direction: column;
   }
   .update-banner { align-items: stretch; flex-direction: column; }
   .update-banner button { width: 100%; }

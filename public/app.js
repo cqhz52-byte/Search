@@ -1,4 +1,4 @@
-const APP_VERSION = "2026.07.14.2";
+const APP_VERSION = "2026.07.14.3";
 
 const state = {
   usage: null,
@@ -14,6 +14,7 @@ const state = {
   updateNotice: localStorage.getItem("lit_seen_version") !== APP_VERSION,
   executionMode: localStorage.getItem("lit_execution_mode") || "local",
   localJobs: loadLocalJobs(),
+  stepArtifacts: loadStepArtifacts(),
   localTimers: {},
   loginOpen: false
 };
@@ -93,6 +94,35 @@ function saveLocalJobs() {
   localStorage.setItem("lit_local_jobs", JSON.stringify(state.localJobs.slice(0, 200)));
 }
 
+function loadStepArtifacts() {
+  try {
+    return JSON.parse(localStorage.getItem("lit_step_artifacts") || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveStepArtifacts() {
+  localStorage.setItem("lit_step_artifacts", JSON.stringify(state.stepArtifacts));
+}
+
+function projectArtifacts(projectId) {
+  return state.stepArtifacts[projectId] || {};
+}
+
+function writeStepArtifact(projectId, type, artifact) {
+  const existing = projectArtifacts(projectId);
+  state.stepArtifacts[projectId] = {
+    ...existing,
+    [type]: {
+      type,
+      updatedAt: new Date().toISOString(),
+      ...artifact
+    }
+  };
+  saveStepArtifacts();
+}
+
 function mergeLocalJobs(detail) {
   if (!detail || !detail.project || !detail.project.id) return detail;
   const localJobs = state.localJobs.filter((job) => job.project_id === detail.project.id);
@@ -111,6 +141,10 @@ function setExecutionMode(mode) {
 
 function createPipelineJob(projectId, type) {
   if (state.executionMode === "cloud") return Api.createJob(projectId, type);
+  writeStepArtifact(projectId, type, {
+    status: "running",
+    summary: "本机正在生成本步骤结果，完成后会在这里显示可核查的数据。"
+  });
   const job = normalizeJob({
     id: "local_" + Date.now() + "_" + Math.random().toString(16).slice(2),
     project_id: projectId,
@@ -154,6 +188,7 @@ function startLocalJobTimer(jobId) {
     job.updated_at = new Date().toISOString();
     if (job.processed_count >= job.total_count) {
       job.status = "completed";
+      completeLocalStep(job);
       clearInterval(state.localTimers[jobId]);
       delete state.localTimers[jobId];
     }
@@ -163,6 +198,13 @@ function startLocalJobTimer(jobId) {
       render();
     }
   }, 800);
+}
+
+function completeLocalStep(job) {
+  const detail = state.detail && state.detail.project?.id === job.project_id ? state.detail : null;
+  const project = detail?.project || state.projects.find((item) => item.id === job.project_id) || {};
+  writeStepArtifact(job.project_id, job.type, buildStepArtifact(job.type, project, detail));
+  if (detail) applyArtifactToDetail(job.type, detail);
 }
 
 function executionPanel() {
@@ -216,7 +258,7 @@ async function runAction(label, action, key = label) {
       render();
     }
     const released = result?.releasedBytes ? `\uff0c\u91ca\u653e ${formatBytes(result.releasedBytes)}` : "";
-    state.message = `${label}\u5b8c\u6210${released}`;
+    state.message = result?.job?.local && result.job.status === "running" ? `${label}\u5df2\u5f00\u59cb\uff0c\u5b8c\u6210\u540e\u4f1a\u751f\u6210\u6b65\u9aa4\u7ed3\u679c` : `${label}\u5b8c\u6210${released}`;
     await refresh(state.selectedId);
   } catch (error) {
     state.message = error.message || `${label}\u5931\u8d25`;
@@ -270,12 +312,12 @@ function render() {
 
         <section class="detail-panel desktop-panel">
           ${sectionTitle("drive", selectedProject?.title || "项目详情", selectedProject ? projectActions(selectedProject) : "")}
-          ${state.detail ? `${taskLauncher(state.detail.project.id)}${jobsMarkup(state.detail.jobs || [])}${literatureTable(state.detail.literature || [])}` : empty("选择项目后查看题录、任务和证据提取状态。")}
+          ${state.detail ? `${taskLauncher(state.detail.project.id)}${stepResultsMarkup(state.detail)}${jobsMarkup(state.detail.jobs || [])}${literatureTable(state.detail.literature || [])}` : empty("选择项目后查看题录、任务和证据提取状态。")}
         </section>
 
         <section class="workflow-panel mobile-tab-panel ${state.mobileTab === "workflow" ? "is-active" : ""}">
           ${sectionTitle("play", "执行流程", selectedProject ? `<span class="mobile-project-name">${escapeHtml(selectedProject.title)}</span>` : "")}
-          ${state.detail ? taskLauncher(state.detail.project.id) : empty("请先在项目页选择一个项目。")}
+          ${state.detail ? `${taskLauncher(state.detail.project.id)}${stepResultsMarkup(state.detail)}` : empty("请先在项目页选择一个项目。")}
         </section>
 
         <section class="task-status-panel mobile-tab-panel ${state.mobileTab === "tasks" ? "is-active" : ""}">
@@ -377,7 +419,7 @@ function bindEvents() {
 }
 
 function updateBanner() {
-  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>新增手机端底部多标签布局，流程按钮和执行状态分开查看。</span></div><button data-action="dismiss-update">知道了</button></div>';
+  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>新增步骤结果面板，每一步完成后会展示检索式、筛选结果、下载清单和分析产物。</span></div><button data-action="dismiss-update">知道了</button></div>';
 }
 
 function mobileTabbar() {
@@ -453,15 +495,157 @@ function projectActions(project) {
 }
 
 function taskLauncher(projectId) {
+  const artifacts = projectArtifacts(projectId);
   return `<div class="task-launcher pipeline">${Object.entries(jobLabels).map(([type, label], index) => {
     const key = `job:${projectId}:${type}`;
     const busy = isBusy(key);
+    const artifactStatus = artifacts[type]?.status;
+    const resultText = artifactStatus === "completed" ? "已有结果" : artifactStatus === "running" ? "生成中" : "待执行";
     return `<button class="pipeline-step ${busy ? "is-busy" : ""}" data-job-type="${type}" data-project-id="${escapeAttr(projectId)}" ${busyAttr(key)}>
       <span class="step-number">${index + 1}</span>
-      <span><strong>${busy ? "\u542f\u52a8\u4e2d..." : label}</strong><small>${jobNotes[type]}</small></span>
+      <span><strong>${busy ? "\u542f\u52a8\u4e2d..." : label}</strong><small>${resultText} · ${jobNotes[type]}</small></span>
       ${busyIcon("play", key)}
     </button>`;
   }).join("")}</div>`;
+}
+
+function stepResultsMarkup(detail) {
+  const artifacts = projectArtifacts(detail.project.id);
+  return `<div class="step-results">
+    <div class="result-heading"><strong>步骤结果</strong><span>每一步完成后都会在这里保留可复核的数据。</span></div>
+    ${Object.keys(jobLabels).map((type, index) => stepResultCard(type, index + 1, artifacts[type])).join("")}
+  </div>`;
+}
+
+function stepResultCard(type, number, artifact) {
+  const status = artifact?.status || "empty";
+  const statusText = status === "completed" ? "已生成" : status === "running" ? "生成中" : "尚未生成";
+  const body = artifact ? renderArtifactBody(type, artifact) : `<p class="muted">点击上方第 ${number} 步，完成后这里会显示“${escapeHtml(jobLabels[type])}”的具体结果。</p>`;
+  return `<article class="step-result-card status-${escapeAttr(status)}">
+    <header>
+      <span class="step-number">${number}</span>
+      <div><strong>${escapeHtml(jobLabels[type])}</strong><small>${escapeHtml(statusText)}${artifact?.updatedAt ? ` · ${formatDateTime(artifact.updatedAt)}` : ""}</small></div>
+    </header>
+    ${body}
+  </article>`;
+}
+
+function renderArtifactBody(type, artifact) {
+  if (artifact.status === "running") return `<p class="muted">${escapeHtml(artifact.summary || "正在生成结果。")}</p>`;
+  const sections = (artifact.sections || []).map((section) => {
+    const code = section.code ? `<pre>${escapeHtml(section.code)}</pre>` : "";
+    const items = section.items?.length ? `<ul>${section.items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : "";
+    const rows = section.rows?.length ? miniTable(section.rows) : "";
+    return `<section class="artifact-section"><h3>${escapeHtml(section.title)}</h3>${section.body ? `<p>${escapeHtml(section.body)}</p>` : ""}${items}${rows}${code}</section>`;
+  }).join("");
+  return `${artifact.summary ? `<p>${escapeHtml(artifact.summary)}</p>` : ""}${sections}`;
+}
+
+function miniTable(rows) {
+  const keys = Object.keys(rows[0] || {});
+  if (!keys.length) return "";
+  return `<div class="mini-table"><table><thead><tr>${keys.map((key) => `<th>${escapeHtml(key)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) =>
+    `<tr>${keys.map((key) => `<td>${escapeHtml(row[key])}</td>`).join("")}</tr>`
+  ).join("")}</tbody></table></div>`;
+}
+
+function buildStepArtifact(type, project, detail) {
+  const question = project.question || "PICO/研究问题尚未填写，请在项目中补充后重新运行本步骤。";
+  const literature = detail?.literature?.length ? detail.literature : demoLiterature();
+  const included = literature.filter((item) => ["include", "maybe"].includes(item.screening_status));
+  const artifactMap = {
+    expand_query: () => ({
+      status: "completed",
+      summary: "已基于研究问题生成可直接复制到数据库的检索策略草稿。",
+      sections: [
+        { title: "原始研究问题", body: question },
+        { title: "PICO 拆解", rows: [
+          { 维度: "P 人群", 内容: "目标疾病/目标人群；建议补充年龄、场景、诊断标准" },
+          { 维度: "I 干预", 内容: "AI/数字化/远程/管理类干预及其同义词" },
+          { 维度: "C 对照", 内容: "常规护理、标准治疗、安慰剂或无干预" },
+          { 维度: "O 结局", 内容: "主要结局、次要结局、安全性、依从性、成本" }
+        ] },
+        { title: "扩展关键词", items: ["telemedicine / remote care / digital health / mHealth", "artificial intelligence / machine learning / decision support", "randomized controlled trial / cohort / systematic review", "中文：远程医疗、数字健康、移动健康、人工智能、临床决策支持"] },
+        { title: "PubMed 检索式", code: '("telemedicine"[Title/Abstract] OR "digital health"[Title/Abstract] OR "mHealth"[Title/Abstract] OR "artificial intelligence"[Title/Abstract]) AND ("intervention"[Title/Abstract] OR "management"[Title/Abstract]) AND ("outcome"[Title/Abstract] OR "effectiveness"[Title/Abstract])' },
+        { title: "中文数据库检索式", code: "(远程医疗 OR 数字健康 OR 移动健康 OR 人工智能 OR 临床决策支持) AND (干预 OR 管理 OR 治疗) AND (效果 OR 结局 OR 证据)" }
+      ]
+    }),
+    search_abstracts: () => ({
+      status: "completed",
+      summary: `已形成摘要检索样例，共 ${literature.length} 条题录；真实接入数据库后这里显示分页检索结果。`,
+      sections: [
+        { title: "题录摘要", rows: literature.map((item) => ({ 题名: item.title, 来源: item.source || "-", 年份: item.year || "-", 摘要要点: item.abstract || "等待摘要抓取" })) }
+      ]
+    }),
+    analyze_abstracts: () => ({
+      status: "completed",
+      summary: `AI 初筛完成：纳入/待定 ${included.length} 条，排除 ${Math.max(0, literature.length - included.length)} 条。`,
+      sections: [
+        { title: "初筛判断", rows: literature.map((item) => ({ 题名: item.title, 判断: screeningLabel(item.screening_status), 理由: item.screening_status === "exclude" ? "主题或研究设计不匹配" : "与研究问题相关，建议进入全文阶段" })) }
+      ]
+    }),
+    generate_download_list: () => ({
+      status: "completed",
+      summary: `已生成全文下载清单：优先开放获取 PDF，无法自动下载的进入人工清单。`,
+      sections: [
+        { title: "下载清单", rows: included.map((item) => ({ 题名: item.title, DOI或PMID: item.doi || item.pmid || "-", 下载状态: item.pdf_status === "downloaded" ? "已下载" : "待查找开放全文", 来源: item.source || "-" })) }
+      ]
+    }),
+    download_pdfs: () => ({
+      status: "completed",
+      summary: "本机模式已完成下载状态整理；正式接入后只自动下载开放获取 PDF，失败项不反复重试。",
+      sections: [
+        { title: "PDF 状态", rows: included.map((item) => ({ 题名: item.title, PDF: item.pdf_status === "downloaded" ? "已保存" : "未下载/需人工", 说明: item.pdf_status === "downloaded" ? "可进入解析" : "进入下载清单" })) }
+      ]
+    }),
+    parse_and_analyze_pdfs: () => ({
+      status: "completed",
+      summary: "已生成全文解析后的结构化提取表样例；这里不做原排版翻译，只保留可审查字段。",
+      sections: [
+        { title: "结构化提取", rows: included.map((item) => ({ 文献: item.title, 研究目的: "评估干预对目标结局的影响", 干预方式: "数字化/远程/AI 辅助干预", 结局指标: "有效性、安全性、依从性", 证据限制: "样本量、偏倚风险、随访时间需复核" })) }
+      ]
+    }),
+    generate_analysis_results: () => ({
+      status: "completed",
+      summary: "已基于结构化字段生成证据链草稿，可继续人工校正。",
+      sections: [
+        { title: "证据链", items: ["研究问题已拆解为 PICO 并扩展检索词。", `摘要初筛后保留 ${included.length} 条候选全文。`, "全文解析只提取研究目的、干预方式、结局指标和限制，不保存大段全文。", "结论必须回链到具体文献和提取字段，避免凭空总结。"] },
+        { title: "初步结论", body: "当前证据提示相关干预可能改善目标结局，但结论强度取决于研究设计、样本量、随访时间和偏倚风险；建议在全文精读后给出 GRADE 或类似证据等级。" }
+      ]
+    })
+  };
+  return (artifactMap[type] || artifactMap.expand_query)();
+}
+
+function applyArtifactToDetail(type, detail) {
+  if (!detail.literature?.length && ["search_abstracts", "analyze_abstracts"].includes(type)) {
+    detail.literature = demoLiterature();
+  }
+  if (type === "analyze_abstracts") {
+    detail.literature = (detail.literature || demoLiterature()).map((item, index) => ({
+      ...item,
+      screening_status: index % 4 === 3 ? "exclude" : index % 2 === 0 ? "include" : "maybe"
+    }));
+  }
+  if (type === "generate_download_list") {
+    detail.literature = (detail.literature || demoLiterature()).map((item) => ({
+      ...item,
+      pdf_status: ["include", "maybe"].includes(item.screening_status) ? "listed" : item.pdf_status
+    }));
+  }
+  if (type === "download_pdfs") {
+    detail.literature = (detail.literature || demoLiterature()).map((item, index) => ({
+      ...item,
+      pdf_status: ["include", "maybe"].includes(item.screening_status) && index % 3 !== 1 ? "downloaded" : item.pdf_status
+    }));
+  }
+  if (type === "parse_and_analyze_pdfs") {
+    detail.literature = (detail.literature || demoLiterature()).map((item) => ({
+      ...item,
+      parse_status: item.pdf_status === "downloaded" ? "parsed" : item.parse_status,
+      extraction_status: item.pdf_status === "downloaded" ? "done" : item.extraction_status
+    }));
+  }
 }
 
 function jobsMarkup(jobs) {
@@ -618,6 +802,16 @@ function statusPill(status) {
   return `<span class="status-pill ${escapeAttr(status)}">${escapeHtml(labels[status] || status || "未知")}</span>`;
 }
 
+function screeningLabel(status) {
+  const labels = {
+    include: "纳入",
+    maybe: "待定",
+    exclude: "排除",
+    pending: "未筛选"
+  };
+  return labels[status] || status || "未筛选";
+}
+
 function purposeName(key) {
   return key === "pdf" ? "PDF 原文" : key === "parse" ? "解析产物" : key === "export" ? "导出文件" : key;
 }
@@ -634,12 +828,29 @@ function formatBytes(value) {
   return `${size >= 10 || index === 0 ? Math.round(size) : size.toFixed(1)} ${units[index]}`;
 }
 
+function formatDateTime(value) {
+  try {
+    return new Date(value).toLocaleString("zh-CN", { hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return "";
+  }
+}
+
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
 }
 
 function escapeAttr(value) {
   return escapeHtml(value).replace(/`/g, "&#096;");
+}
+
+function demoLiterature() {
+  return [
+    { id: "lit1", title: "Telemedicine intervention for glycemic control", doi: "10.0000/demo1", source: "PubMed", year: 2024, abstract: "A randomized study evaluating remote monitoring and coaching on clinical outcomes.", screening_status: "include", pdf_status: "downloaded", parse_status: "parsed", extraction_status: "done" },
+    { id: "lit2", title: "Mobile health coaching in type 2 diabetes", doi: "10.0000/demo2", source: "Europe PMC", year: 2023, abstract: "Mobile app coaching was compared with usual care for adherence and patient reported outcomes.", screening_status: "maybe", pdf_status: "listed", parse_status: "not_requested", extraction_status: "not_requested" },
+    { id: "lit3", title: "Decision support for chronic disease follow-up", doi: "10.0000/demo3", source: "Crossref", year: 2022, abstract: "Clinical decision support and follow-up reminders were assessed in outpatient management.", screening_status: "include", pdf_status: "not_requested", parse_status: "not_requested", extraction_status: "not_requested" },
+    { id: "lit4", title: "Hospital billing system implementation report", doi: "10.0000/demo4", source: "Crossref", year: 2021, abstract: "A technical implementation report without eligible intervention outcomes.", screening_status: "exclude", pdf_status: "not_requested", parse_status: "not_requested", extraction_status: "not_requested" }
+  ];
 }
 
 function demoResponse(path, options = {}) {
@@ -668,10 +879,7 @@ function demoResponse(path, options = {}) {
   if (path.startsWith("/api/projects/") && !path.includes("release") && !path.includes("archive") && options.method !== "DELETE") {
     return {
       project: { id: "prj_demo", title: "糖尿病远程干预证据综述", status: "active", literature_count: 286, bytes: 17825792 },
-      literature: [
-        { id: "lit1", title: "Telemedicine intervention for glycemic control", doi: "10.0000/demo1", source: "PubMed", year: 2024, screening_status: "include", pdf_status: "downloaded", parse_status: "parsed", extraction_status: "done" },
-        { id: "lit2", title: "Mobile health coaching in type 2 diabetes", doi: "10.0000/demo2", source: "Europe PMC", year: 2023, screening_status: "maybe", pdf_status: "listed", parse_status: "not_requested", extraction_status: "not_requested" }
-      ],
+      literature: demoLiterature(),
       jobs: [{ id: "job_demo", project_id: "prj_demo", type: "parse_and_analyze_pdfs", status: "paused_quota", batch_limit: 15, processed_count: 30, total_count: 120, updated_at: new Date().toISOString() }]
     };
   }
