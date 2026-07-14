@@ -1,4 +1,4 @@
-const CACHE_NAME = "literature-evidence:v2026.07.14.3";
+const CACHE_NAME = "literature-evidence:v2026.07.14.4";
 const ASSETS = ["/", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", (event) => {

@@ -1,4 +1,4 @@
-const APP_VERSION = "2026.07.14.3";
+const APP_VERSION = "2026.07.14.4";
 
 const state = {
   usage: null,
@@ -15,28 +15,29 @@ const state = {
   executionMode: localStorage.getItem("lit_execution_mode") || "local",
   localJobs: loadLocalJobs(),
   stepArtifacts: loadStepArtifacts(),
+  stepViews: loadStepViews(),
   localTimers: {},
   loginOpen: false
 };
 
 const jobLabels = {
-  expand_query: "AI 扩充检索内容",
-  search_abstracts: "检索摘要",
-  analyze_abstracts: "AI 分析摘要",
-  generate_download_list: "生成下载列表",
-  download_pdfs: "开始下载全文",
-  parse_and_analyze_pdfs: "解析全文并 AI 分析",
-  generate_analysis_results: "生成分析结果"
+  expand_query: "AI ??????",
+  search_abstracts: "????",
+  analyze_abstracts: "AI ????",
+  generate_download_list: "??????",
+  download_pdfs: "??????",
+  parse_and_analyze_pdfs: "????? AI ??",
+  generate_analysis_results: "??????"
 };
 
 const jobNotes = {
-  expand_query: "扩展 PICO、同义词、MeSH/关键词和布尔逻辑。",
-  search_abstracts: "按小批量检索题录与摘要，只保存必要元数据。",
-  analyze_abstracts: "根据纳入/排除标准聚焦到候选文献。",
-  generate_download_list: "整理 DOI、PMID、开放全文入口和失败待办。",
-  download_pdfs: "仅下载开放或已授权来源，避免反复重试。",
-  parse_and_analyze_pdfs: "LlamaParse 识别解析，DeepSeek 结构化提取。",
-  generate_analysis_results: "生成证据表、限制说明和结论草稿。"
+  expand_query: "?? PICO?????MeSH/?????????",
+  search_abstracts: "?????????????????????",
+  analyze_abstracts: "????/????????????",
+  generate_download_list: "?? DOI?PMID?????????????",
+  download_pdfs: "???????????????????",
+  parse_and_analyze_pdfs: "LlamaParse ?????DeepSeek ??????",
+  generate_analysis_results: "????????????????"
 };
 
 const app = document.querySelector("#app");
@@ -106,6 +107,18 @@ function saveStepArtifacts() {
   localStorage.setItem("lit_step_artifacts", JSON.stringify(state.stepArtifacts));
 }
 
+function loadStepViews() {
+  try {
+    return JSON.parse(localStorage.getItem("lit_step_views") || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveStepViews() {
+  localStorage.setItem("lit_step_views", JSON.stringify(state.stepViews));
+}
+
 function projectArtifacts(projectId) {
   return state.stepArtifacts[projectId] || {};
 }
@@ -121,6 +134,16 @@ function writeStepArtifact(projectId, type, artifact) {
     }
   };
   saveStepArtifacts();
+}
+
+function stepView(projectId, type) {
+  return state.stepViews[`${projectId}:${type}`] || "input";
+}
+
+function setStepView(projectId, type, view) {
+  state.stepViews[`${projectId}:${type}`] = view === "result" ? "result" : "input";
+  saveStepViews();
+  render();
 }
 
 function mergeLocalJobs(detail) {
@@ -143,7 +166,7 @@ function createPipelineJob(projectId, type) {
   if (state.executionMode === "cloud") return Api.createJob(projectId, type);
   writeStepArtifact(projectId, type, {
     status: "running",
-    summary: "本机正在生成本步骤结果，完成后会在这里显示可核查的数据。"
+    summary: "????????????????????????????"
   });
   const job = normalizeJob({
     id: "local_" + Date.now() + "_" + Math.random().toString(16).slice(2),
@@ -279,24 +302,24 @@ function render() {
     <div class="app-shell">
       <header class="topbar">
         <div>
-          <div class="brand">${icon("shield")} 文献证据工作台 <small class="version-badge">v${APP_VERSION}</small></div>
-          <p>免费额度优先：小批次任务、可暂停、可清理、可释放原始文件。</p>
+          <div class="brand">${icon("shield")} ??????? <small class="version-badge">v${APP_VERSION}</small></div>
+          <p>?????????????????????????????</p>
         </div>
         <div class="top-actions">
-          <button class="icon-button" data-action="refresh" title="刷新">${state.loading ? icon("loader", "spin") : icon("refresh")}</button>
-          <button class="secondary" data-action="open-login">${icon("unlock")} 登录</button>
+          <button class="icon-button" data-action="refresh" title="??">${state.loading ? icon("loader", "spin") : icon("refresh")}</button>
+          <button class="secondary" data-action="open-login">${icon("unlock")} ??</button>
         </div>
       </header>
       ${state.updateNotice ? updateBanner() : ""}
       ${state.message ? `<div class="toast">${escapeHtml(state.message)}</div>` : ""}
-      ${state.loading || activeCount ? `<div class="activity-bar"><span></span><strong>${state.loading ? "正在刷新数据" : `正在执行 ${activeCount} 个操作`}</strong></div>` : ""}
+      ${state.loading || activeCount ? `<div class="activity-bar"><span></span><strong>${state.loading ? "??????" : `???? ${activeCount} ???`}</strong></div>` : ""}
       <main class="layout">
         <section class="resource-panel mobile-tab-panel ${state.mobileTab === "resources" ? "is-active" : ""}">
-          ${sectionTitle("gauge", "资源中心", `<button data-action="cleanup" ${busyAttr("cleanup")}>${busyIcon("recycle", "cleanup")} ${isBusy("cleanup") ? "\u6e05\u7406\u4e2d" : "\u6e05\u7406\u4e34\u65f6\u6587\u4ef6"}</button>`)}
+          ${sectionTitle("gauge", "????", `<button data-action="cleanup" ${busyAttr("cleanup")}>${busyIcon("recycle", "cleanup")} ${isBusy("cleanup") ? "\u6e05\u7406\u4e2d" : "\u6e05\u7406\u4e34\u65f6\u6587\u4ef6"}</button>`)}
           <div class="metric-grid">
-            ${metric("R2 对象", usage ? usage.r2.totalObjects : "-", usage ? formatBytes(usage.r2.totalBytes) : "读取中")}
-            ${metric("D1 题录", usage ? usage.d1.literature || 0 : "-", `${usage?.d1.projects || 0} 个项目`)}
-            ${metric("今日任务", usage ? `${usage.today.usedUnits}/${usage.today.dailyLimit}` : "-", `剩余 ${usage?.today.remainingUnits ?? "-"} units`)}
+            ${metric("R2 ??", usage ? usage.r2.totalObjects : "-", usage ? formatBytes(usage.r2.totalBytes) : "???")}
+            ${metric("D1 ??", usage ? usage.d1.literature || 0 : "-", `${usage?.d1.projects || 0} ???`)}
+            ${metric("????", usage ? `${usage.today.usedUnits}/${usage.today.dailyLimit}` : "-", `?? ${usage?.today.remainingUnits ?? "-"} units`)}
           </div>
           <div class="quota-line"><span style="width:${quotaPercent}%"></span></div>
           ${purposeBars(usage)}
@@ -304,37 +327,37 @@ function render() {
         </section>
 
         <section class="project-panel mobile-tab-panel ${state.mobileTab === "projects" ? "is-active" : ""}">
-          ${sectionTitle("database", "项目", createProjectMarkup())}
+          ${sectionTitle("database", "??", createProjectMarkup())}
           <div class="project-list">
-            ${state.projects.length ? state.projects.map(projectRow).join("") : empty("还没有项目，先创建一个研究问题。")}
+            ${state.projects.length ? state.projects.map(projectRow).join("") : empty("????????????????")}
           </div>
         </section>
 
         <section class="detail-panel desktop-panel">
-          ${sectionTitle("drive", selectedProject?.title || "项目详情", selectedProject ? projectActions(selectedProject) : "")}
-          ${state.detail ? `${taskLauncher(state.detail.project.id)}${stepResultsMarkup(state.detail)}${jobsMarkup(state.detail.jobs || [])}${literatureTable(state.detail.literature || [])}` : empty("选择项目后查看题录、任务和证据提取状态。")}
+          ${sectionTitle("drive", selectedProject?.title || "????", selectedProject ? projectActions(selectedProject) : "")}
+          ${state.detail ? `${workflowCards(state.detail)}${jobsMarkup(state.detail.jobs || [])}${literatureTable(state.detail.literature || [])}` : empty("????????????????????")}
         </section>
 
         <section class="workflow-panel mobile-tab-panel ${state.mobileTab === "workflow" ? "is-active" : ""}">
-          ${sectionTitle("play", "执行流程", selectedProject ? `<span class="mobile-project-name">${escapeHtml(selectedProject.title)}</span>` : "")}
-          ${state.detail ? `${taskLauncher(state.detail.project.id)}${stepResultsMarkup(state.detail)}` : empty("请先在项目页选择一个项目。")}
+          ${sectionTitle("play", "????", selectedProject ? `<span class="mobile-project-name">${escapeHtml(selectedProject.title)}</span>` : "")}
+          ${state.detail ? workflowCards(state.detail) : empty("?????????????")}
         </section>
 
         <section class="task-status-panel mobile-tab-panel ${state.mobileTab === "tasks" ? "is-active" : ""}">
-          ${sectionTitle("drive", "任务状态", selectedProject ? projectActions(selectedProject) : "")}
-          ${state.detail ? `${jobsMarkup(state.detail.jobs || [])}${literatureTable(state.detail.literature || [])}` : empty("请先在项目页选择一个项目。")}
+          ${sectionTitle("drive", "????", selectedProject ? projectActions(selectedProject) : "")}
+          ${state.detail ? `${jobsMarkup(state.detail.jobs || [])}${literatureTable(state.detail.literature || [])}` : empty("?????????????")}
         </section>
         <section class="trash-panel mobile-tab-panel ${state.mobileTab === "manage" ? "is-active" : ""}">
-          ${sectionTitle("trash", "回收站", "")}
+          ${sectionTitle("trash", "???", "")}
           <div class="trash-list">
-            ${state.trash.length ? state.trash.map(trashRow).join("") : empty("没有待释放项目。")}
+            ${state.trash.length ? state.trash.map(trashRow).join("") : empty("????????")}
           </div>
         </section>
 
         <section class="users-panel mobile-tab-panel ${state.mobileTab === "manage" ? "is-active" : ""}">
-          ${sectionTitle("users", "授权用户", userFormMarkup())}
+          ${sectionTitle("users", "????", userFormMarkup())}
           <div class="user-list">
-            ${state.users.length ? state.users.map(userRow).join("") : empty("管理员登录后可管理授权用户。")}
+            ${state.users.length ? state.users.map(userRow).join("") : empty("??????????????")}
           </div>
         </section>
       </main>
@@ -355,6 +378,7 @@ function bindEvents() {
   });
   document.querySelector("[data-action='cleanup']")?.addEventListener("click", () => runAction("\u6e05\u7406\u4e34\u65f6\u6587\u4ef6", Api.cleanupTemp, "cleanup"));
   document.querySelectorAll("[data-mode]").forEach((button) => button.addEventListener("click", () => setExecutionMode(button.dataset.mode)));
+  document.querySelectorAll("[data-step-view]").forEach((button) => button.addEventListener("click", () => setStepView(button.dataset.projectId, button.dataset.stepType, button.dataset.stepView)));
   document.querySelectorAll("[data-select-project]").forEach((button) => button.addEventListener("click", () => refresh(button.dataset.selectProject)));
   document.querySelector("[data-create-project]")?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -419,16 +443,16 @@ function bindEvents() {
 }
 
 function updateBanner() {
-  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>新增步骤结果面板，每一步完成后会展示检索式、筛选结果、下载清单和分析产物。</span></div><button data-action="dismiss-update">知道了</button></div>';
+  return '<div class="update-banner"><div><strong>???? v' + APP_VERSION + '</strong><span>?????????????????????????????????</span></div><button data-action="dismiss-update">???</button></div>';
 }
 
 function mobileTabbar() {
   const tabs = [
-    ["workflow", "play", "流程"],
-    ["tasks", "drive", "任务"],
-    ["projects", "database", "项目"],
-    ["resources", "gauge", "资源"],
-    ["manage", "users", "管理"]
+    ["workflow", "play", "??"],
+    ["tasks", "drive", "??"],
+    ["projects", "database", "??"],
+    ["resources", "gauge", "??"],
+    ["manage", "users", "??"]
   ];
   return '<nav class="mobile-tabbar">' + tabs.map(([id, iconName, label]) =>
     '<button class="' + (state.mobileTab === id ? 'active' : '') + '" data-mobile-tab="' + id + '">' + icon(iconName) + '<span>' + label + '</span></button>'
@@ -463,21 +487,21 @@ function purposeBars(usage) {
     <div class="purpose-row">
       <label>${purposeName(row.key)}</label>
       <div><span style="width:${Math.round((row.bytes / max) * 100)}%"></span></div>
-      <small>${row.count} 个 · ${formatBytes(row.bytes)}</small>
+      <small>${row.count} ? ? ${formatBytes(row.bytes)}</small>
     </div>`).join("")}</div>`;
 }
 
 function createProjectMarkup() {
   return `<form class="create-form" data-create-project>
-    <input name="title" placeholder="项目名称" required>
-    <textarea name="question" placeholder="PICO/研究问题"></textarea>
-    <button type="submit">${icon("plus")} 创建</button>
+    <input name="title" placeholder="????" required>
+    <textarea name="question" placeholder="PICO/????"></textarea>
+    <button type="submit">${icon("plus")} ??</button>
   </form>`;
 }
 
 function projectRow(project) {
   return `<button class="project-row ${project.id === state.selectedId ? "active" : ""}" data-select-project="${escapeAttr(project.id)}">
-    <span><strong>${escapeHtml(project.title)}</strong><small>${project.status} · ${project.literature_count || 0} 条题录 · ${formatBytes(project.bytes || 0)}</small></span>
+    <span><strong>${escapeHtml(project.title)}</strong><small>${project.status} ? ${project.literature_count || 0} ??? ? ${formatBytes(project.bytes || 0)}</small></span>
   </button>`;
 }
 
@@ -494,44 +518,57 @@ function projectActions(project) {
   </div>`;
 }
 
-function taskLauncher(projectId) {
-  const artifacts = projectArtifacts(projectId);
-  return `<div class="task-launcher pipeline">${Object.entries(jobLabels).map(([type, label], index) => {
-    const key = `job:${projectId}:${type}`;
-    const busy = isBusy(key);
-    const artifactStatus = artifacts[type]?.status;
-    const resultText = artifactStatus === "completed" ? "已有结果" : artifactStatus === "running" ? "生成中" : "待执行";
-    return `<button class="pipeline-step ${busy ? "is-busy" : ""}" data-job-type="${type}" data-project-id="${escapeAttr(projectId)}" ${busyAttr(key)}>
-      <span class="step-number">${index + 1}</span>
-      <span><strong>${busy ? "\u542f\u52a8\u4e2d..." : label}</strong><small>${resultText} · ${jobNotes[type]}</small></span>
-      ${busyIcon("play", key)}
-    </button>`;
-  }).join("")}</div>`;
-}
-
-function stepResultsMarkup(detail) {
+function workflowCards(detail) {
   const artifacts = projectArtifacts(detail.project.id);
-  return `<div class="step-results">
-    <div class="result-heading"><strong>步骤结果</strong><span>每一步完成后都会在这里保留可复核的数据。</span></div>
-    ${Object.keys(jobLabels).map((type, index) => stepResultCard(type, index + 1, artifacts[type])).join("")}
+  return `<div class="workflow-cards">
+    ${Object.keys(jobLabels).map((type, index) => workflowCard(detail, type, index + 1, artifacts[type])).join("")}
   </div>`;
 }
 
-function stepResultCard(type, number, artifact) {
+function workflowCard(detail, type, number, artifact) {
+  const projectId = detail.project.id;
   const status = artifact?.status || "empty";
-  const statusText = status === "completed" ? "已生成" : status === "running" ? "生成中" : "尚未生成";
-  const body = artifact ? renderArtifactBody(type, artifact) : `<p class="muted">点击上方第 ${number} 步，完成后这里会显示“${escapeHtml(jobLabels[type])}”的具体结果。</p>`;
-  return `<article class="step-result-card status-${escapeAttr(status)}">
+  const statusText = status === "completed" ? "???" : status === "running" ? "???" : "????";
+  const key = `job:${projectId}:${type}`;
+  const busy = isBusy(key);
+  const view = stepView(projectId, type);
+  const body = view === "result" ? renderStepOutput(type, number, artifact) : renderStepInput(type, detail);
+  return `<article class="workflow-card status-${escapeAttr(status)}">
     <header>
       <span class="step-number">${number}</span>
-      <div><strong>${escapeHtml(jobLabels[type])}</strong><small>${escapeHtml(statusText)}${artifact?.updatedAt ? ` · ${formatDateTime(artifact.updatedAt)}` : ""}</small></div>
+      <div class="workflow-card-title">
+        <strong>${escapeHtml(jobLabels[type])}</strong>
+        <small>${escapeHtml(statusText)}${artifact?.updatedAt ? ` ? ${formatDateTime(artifact.updatedAt)}` : ""}</small>
+      </div>
+      <button class="run-step-button" title="?????" data-job-type="${escapeAttr(type)}" data-project-id="${escapeAttr(projectId)}" ${busyAttr(key)}>${busyIcon("play", key)} ${busy ? "???" : "??"}</button>
     </header>
-    ${body}
+    <div class="workflow-process">
+      <span class="process-dot ${status === "completed" ? "done" : status === "running" || busy ? "running" : ""}"></span>
+      <span>${escapeHtml(stepProcessText(type, status, busy))}</span>
+    </div>
+    <div class="step-switch">
+      <button class="${view === "input" ? "" : "secondary"}" data-step-view="input" data-step-type="${escapeAttr(type)}" data-project-id="${escapeAttr(projectId)}">??</button>
+      <button class="${view === "result" ? "" : "secondary"}" data-step-view="result" data-step-type="${escapeAttr(type)}" data-project-id="${escapeAttr(projectId)}">??</button>
+    </div>
+    <div class="workflow-card-body">${body}</div>
   </article>`;
 }
 
+function renderStepOutput(type, number, artifact) {
+  if (!artifact) return `<p class="muted">? ${number} ?????????????????????????????</p>`;
+  return renderArtifactBody(type, artifact);
+}
+
+function renderStepInput(type, detail) {
+  return renderArtifactLike(buildStepInput(type, detail));
+}
+
 function renderArtifactBody(type, artifact) {
-  if (artifact.status === "running") return `<p class="muted">${escapeHtml(artifact.summary || "正在生成结果。")}</p>`;
+  if (artifact.status === "running") return `<p class="muted">${escapeHtml(artifact.summary || "???????")}</p>`;
+  return renderArtifactLike(artifact);
+}
+
+function renderArtifactLike(artifact) {
   const sections = (artifact.sections || []).map((section) => {
     const code = section.code ? `<pre>${escapeHtml(section.code)}</pre>` : "";
     const items = section.items?.length ? `<ul>${section.items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : "";
@@ -539,6 +576,12 @@ function renderArtifactBody(type, artifact) {
     return `<section class="artifact-section"><h3>${escapeHtml(section.title)}</h3>${section.body ? `<p>${escapeHtml(section.body)}</p>` : ""}${items}${rows}${code}</section>`;
   }).join("");
   return `${artifact.summary ? `<p>${escapeHtml(artifact.summary)}</p>` : ""}${sections}`;
+}
+
+function stepProcessText(type, status, busy) {
+  if (busy || status === "running") return "????????????????????";
+  if (status === "completed") return "????????????????????????????";
+  return `????${jobNotes[type]}`;
 }
 
 function miniTable(rows) {
@@ -549,68 +592,129 @@ function miniTable(rows) {
   ).join("")}</tbody></table></div>`;
 }
 
+function buildStepInput(type, detail) {
+  const project = detail.project || {};
+  const artifacts = projectArtifacts(project.id);
+  const literature = detail.literature?.length ? detail.literature : demoLiterature();
+  const included = literature.filter((item) => ["include", "maybe"].includes(item.screening_status));
+  const inputs = {
+    expand_query: () => ({
+      summary: "????????????????????AI ????? PICO????????????",
+      sections: [
+        { title: "??", body: project.title || "?????" },
+        { title: "???? / PICO", body: project.question || "??????????????????????????????" },
+        { title: "????", items: ["????????", "?? PubMed / ????????", "????????????????"] }
+      ]
+    }),
+    search_abstracts: () => ({
+      summary: "??????? 1 ?????????????????????",
+      sections: [
+        { title: "??????", body: artifacts.expand_query?.status === "completed" ? "???? 1 ????????" : "? 1 ???????????????????????????" },
+        { title: "?????", items: ["PubMed / Europe PMC", "Crossref", "?????????", "????????"] },
+        { title: "????", body: "???????????????????????? D1 ??" }
+      ]
+    }),
+    analyze_abstracts: () => ({
+      summary: "????????????????AI ????/?????????",
+      sections: [
+        { title: "????", rows: literature.map((item) => ({ ??: item.title, ??: item.source || "-", ??: item.abstract || "??????" })) },
+        { title: "????", items: ["???? PICO", "?????????", "????????", "???????????"] }
+      ]
+    }),
+    generate_download_list: () => ({
+      summary: "?????? AI ??????/?????",
+      sections: [
+        { title: "????", rows: included.map((item) => ({ ??: item.title, ??: screeningLabel(item.screening_status), DOI?PMID: item.doi || item.pmid || "-" })) },
+        { title: "????", items: ["?????? PDF", "??????????????", "???????????????"] }
+      ]
+    }),
+    download_pdfs: () => ({
+      summary: "??????????????????????????",
+      sections: [
+        { title: "????", rows: included.map((item) => ({ ??: item.title, ??PDF??: item.pdf_status || "not_requested", ??: item.source || "-" })) },
+        { title: "????", body: "???????????????????????" }
+      ]
+    }),
+    parse_and_analyze_pdfs: () => ({
+      summary: "??????????????? PDF????????????????????????",
+      sections: [
+        { title: "?????", rows: included.map((item) => ({ ??: item.title, PDF??: item.pdf_status || "not_requested", ????: item.parse_status || "not_requested" })) },
+        { title: "????", items: ["????", "????", "????", "????", "????", "????", "????"] }
+      ]
+    }),
+    generate_analysis_results: () => ({
+      summary: "??????????? AI ??????????",
+      sections: [
+        { title: "????", rows: included.map((item) => ({ ??: item.title, ??: item.parse_status || "not_requested", ??: item.extraction_status || "not_requested" })) },
+        { title: "????", items: ["???????", "??????", "???????", "???????????"] }
+      ]
+    })
+  };
+  return (inputs[type] || inputs.expand_query)();
+}
+
 function buildStepArtifact(type, project, detail) {
-  const question = project.question || "PICO/研究问题尚未填写，请在项目中补充后重新运行本步骤。";
+  const question = project.question || "PICO/?????????????????????????";
   const literature = detail?.literature?.length ? detail.literature : demoLiterature();
   const included = literature.filter((item) => ["include", "maybe"].includes(item.screening_status));
   const artifactMap = {
     expand_query: () => ({
       status: "completed",
-      summary: "已基于研究问题生成可直接复制到数据库的检索策略草稿。",
+      summary: "??????????????????????????",
       sections: [
-        { title: "原始研究问题", body: question },
-        { title: "PICO 拆解", rows: [
-          { 维度: "P 人群", 内容: "目标疾病/目标人群；建议补充年龄、场景、诊断标准" },
-          { 维度: "I 干预", 内容: "AI/数字化/远程/管理类干预及其同义词" },
-          { 维度: "C 对照", 内容: "常规护理、标准治疗、安慰剂或无干预" },
-          { 维度: "O 结局", 内容: "主要结局、次要结局、安全性、依从性、成本" }
+        { title: "??????", body: question },
+        { title: "PICO ??", rows: [
+          { ??: "P ??", ??: "????/???????????????????" },
+          { ??: "I ??", ??: "AI/???/??/??????????" },
+          { ??: "C ??", ??: "?????????????????" },
+          { ??: "O ??", ??: "????????????????????" }
         ] },
-        { title: "扩展关键词", items: ["telemedicine / remote care / digital health / mHealth", "artificial intelligence / machine learning / decision support", "randomized controlled trial / cohort / systematic review", "中文：远程医疗、数字健康、移动健康、人工智能、临床决策支持"] },
-        { title: "PubMed 检索式", code: '("telemedicine"[Title/Abstract] OR "digital health"[Title/Abstract] OR "mHealth"[Title/Abstract] OR "artificial intelligence"[Title/Abstract]) AND ("intervention"[Title/Abstract] OR "management"[Title/Abstract]) AND ("outcome"[Title/Abstract] OR "effectiveness"[Title/Abstract])' },
-        { title: "中文数据库检索式", code: "(远程医疗 OR 数字健康 OR 移动健康 OR 人工智能 OR 临床决策支持) AND (干预 OR 管理 OR 治疗) AND (效果 OR 结局 OR 证据)" }
+        { title: "?????", items: ["telemedicine / remote care / digital health / mHealth", "artificial intelligence / machine learning / decision support", "randomized controlled trial / cohort / systematic review", "?????????????????????????????"] },
+        { title: "PubMed ???", code: '("telemedicine"[Title/Abstract] OR "digital health"[Title/Abstract] OR "mHealth"[Title/Abstract] OR "artificial intelligence"[Title/Abstract]) AND ("intervention"[Title/Abstract] OR "management"[Title/Abstract]) AND ("outcome"[Title/Abstract] OR "effectiveness"[Title/Abstract])' },
+        { title: "????????", code: "(???? OR ???? OR ???? OR ???? OR ??????) AND (?? OR ?? OR ??) AND (?? OR ?? OR ??)" }
       ]
     }),
     search_abstracts: () => ({
       status: "completed",
-      summary: `已形成摘要检索样例，共 ${literature.length} 条题录；真实接入数据库后这里显示分页检索结果。`,
+      summary: `??????????? ${literature.length} ???????????????????????`,
       sections: [
-        { title: "题录摘要", rows: literature.map((item) => ({ 题名: item.title, 来源: item.source || "-", 年份: item.year || "-", 摘要要点: item.abstract || "等待摘要抓取" })) }
+        { title: "????", rows: literature.map((item) => ({ ??: item.title, ??: item.source || "-", ??: item.year || "-", ????: item.abstract || "??????" })) }
       ]
     }),
     analyze_abstracts: () => ({
       status: "completed",
-      summary: `AI 初筛完成：纳入/待定 ${included.length} 条，排除 ${Math.max(0, literature.length - included.length)} 条。`,
+      summary: `AI ???????/?? ${included.length} ???? ${Math.max(0, literature.length - included.length)} ??`,
       sections: [
-        { title: "初筛判断", rows: literature.map((item) => ({ 题名: item.title, 判断: screeningLabel(item.screening_status), 理由: item.screening_status === "exclude" ? "主题或研究设计不匹配" : "与研究问题相关，建议进入全文阶段" })) }
+        { title: "????", rows: literature.map((item) => ({ ??: item.title, ??: screeningLabel(item.screening_status), ??: item.screening_status === "exclude" ? "??????????" : "????????????????" })) }
       ]
     }),
     generate_download_list: () => ({
       status: "completed",
-      summary: `已生成全文下载清单：优先开放获取 PDF，无法自动下载的进入人工清单。`,
+      summary: `???????????????? PDF???????????????`,
       sections: [
-        { title: "下载清单", rows: included.map((item) => ({ 题名: item.title, DOI或PMID: item.doi || item.pmid || "-", 下载状态: item.pdf_status === "downloaded" ? "已下载" : "待查找开放全文", 来源: item.source || "-" })) }
+        { title: "????", rows: included.map((item) => ({ ??: item.title, DOI?PMID: item.doi || item.pmid || "-", ????: item.pdf_status === "downloaded" ? "???" : "???????", ??: item.source || "-" })) }
       ]
     }),
     download_pdfs: () => ({
       status: "completed",
-      summary: "本机模式已完成下载状态整理；正式接入后只自动下载开放获取 PDF，失败项不反复重试。",
+      summary: "???????????????????????????? PDF??????????",
       sections: [
-        { title: "PDF 状态", rows: included.map((item) => ({ 题名: item.title, PDF: item.pdf_status === "downloaded" ? "已保存" : "未下载/需人工", 说明: item.pdf_status === "downloaded" ? "可进入解析" : "进入下载清单" })) }
+        { title: "PDF ??", rows: included.map((item) => ({ ??: item.title, PDF: item.pdf_status === "downloaded" ? "???" : "???/???", ??: item.pdf_status === "downloaded" ? "?????" : "??????" })) }
       ]
     }),
     parse_and_analyze_pdfs: () => ({
       status: "completed",
-      summary: "已生成全文解析后的结构化提取表样例；这里不做原排版翻译，只保留可审查字段。",
+      summary: "?????????????????????????????????????",
       sections: [
-        { title: "结构化提取", rows: included.map((item) => ({ 文献: item.title, 研究目的: "评估干预对目标结局的影响", 干预方式: "数字化/远程/AI 辅助干预", 结局指标: "有效性、安全性、依从性", 证据限制: "样本量、偏倚风险、随访时间需复核" })) }
+        { title: "?????", rows: included.map((item) => ({ ??: item.title, ????: "????????????", ????: "???/??/AI ????", ????: "???????????", ????: "????????????????" })) }
       ]
     }),
     generate_analysis_results: () => ({
       status: "completed",
-      summary: "已基于结构化字段生成证据链草稿，可继续人工校正。",
+      summary: "????????????????????????",
       sections: [
-        { title: "证据链", items: ["研究问题已拆解为 PICO 并扩展检索词。", `摘要初筛后保留 ${included.length} 条候选全文。`, "全文解析只提取研究目的、干预方式、结局指标和限制，不保存大段全文。", "结论必须回链到具体文献和提取字段，避免凭空总结。"] },
-        { title: "初步结论", body: "当前证据提示相关干预可能改善目标结局，但结论强度取决于研究设计、样本量、随访时间和偏倚风险；建议在全文精读后给出 GRADE 或类似证据等级。" }
+        { title: "???", items: ["???????? PICO ???????", `??????? ${included.length} ??????`, "?????????????????????????????????", "????????????????????????"] },
+        { title: "????", body: "???????????????????????????????????????????????????????? GRADE ????????" }
       ]
     })
   };
@@ -658,7 +762,7 @@ function jobsMarkup(jobs) {
     return `<div class="job-row status-${escapeAttr(job.status)}">
       <div>
         <div class="job-title-line"><strong>${escapeHtml(jobLabels[job.type] || job.type)}</strong><span class="job-pills">${localBadge}${statusPill(job.status)}</span></div>
-        <small>${processed}/${total || "-"} · \u6279\u91cf ${job.batch_limit || 15}</small>
+        <small>${processed}/${total || "-"} ? \u6279\u91cf ${job.batch_limit || 15}</small>
         <div class="job-progress ${isActiveJob(job.status) ? "active" : ""}"><span style="width:${percent || (isActiveJob(job.status) ? 18 : 0)}%"></span></div>
       </div>
       <div class="row-actions">
@@ -670,11 +774,11 @@ function jobsMarkup(jobs) {
 }
 
 function literatureTable(items) {
-  if (!items.length) return empty("还没有题录。");
+  if (!items.length) return empty("??????");
   return `<div class="table-wrap"><table>
-    <thead><tr><th>题名</th><th>来源</th><th>初筛</th><th>PDF</th><th>解析</th><th>证据</th></tr></thead>
+    <thead><tr><th>??</th><th>??</th><th>??</th><th>PDF</th><th>??</th><th>??</th></tr></thead>
     <tbody>${items.map((item) => `<tr>
-      <td><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.doi || item.pmid || "无 DOI/PMID")}</small></td>
+      <td><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.doi || item.pmid || "? DOI/PMID")}</small></td>
       <td>${escapeHtml(item.source || "-")} ${escapeHtml(String(item.year || ""))}</td>
       <td>${badge(item.screening_status)}</td>
       <td>${badge(item.pdf_status)}</td>
@@ -686,47 +790,47 @@ function literatureTable(items) {
 
 function trashRow(project) {
   return `<div class="trash-row">
-    <span><strong>${escapeHtml(project.title)}</strong><small>${formatBytes(project.bytes || 0)} · 7 天内可恢复</small></span>
+    <span><strong>${escapeHtml(project.title)}</strong><small>${formatBytes(project.bytes || 0)} ? 7 ?????</small></span>
     <div class="row-actions">
-      <button class="secondary" data-trash-action="restore" data-project-id="${escapeAttr(project.id)}">恢复</button>
-      <button class="danger" data-trash-action="delete" data-project-id="${escapeAttr(project.id)}">释放</button>
+      <button class="secondary" data-trash-action="restore" data-project-id="${escapeAttr(project.id)}">??</button>
+      <button class="danger" data-trash-action="delete" data-project-id="${escapeAttr(project.id)}">??</button>
     </div>
   </div>`;
 }
 
 function userFormMarkup() {
   return `<form class="user-form" data-user-form>
-    <input name="phone" placeholder="账号/手机号" required>
-    <input name="name" placeholder="姓名/备注">
+    <input name="phone" placeholder="??/???" required>
+    <input name="name" placeholder="??/??">
     <select name="role">
-      <option value="researcher">研究者</option>
-      <option value="project_admin">项目管理员</option>
-      <option value="viewer">只读成员</option>
-      <option value="super_admin">超级管理员</option>
+      <option value="researcher">???</option>
+      <option value="project_admin">?????</option>
+      <option value="viewer">????</option>
+      <option value="super_admin">?????</option>
     </select>
-    <input name="password" type="password" placeholder="新用户必填，修改可留空">
-    <button type="submit">${icon("plus")} 保存</button>
+    <input name="password" type="password" placeholder="???????????">
+    <button type="submit">${icon("plus")} ??</button>
   </form>`;
 }
 
 function userRow(user) {
   return `<div class="user-row">
-    <span><strong>${escapeHtml(user.phone)}</strong><small>${escapeHtml(user.name || "-")} · ${escapeHtml(user.role)} · ${user.enabled === 0 ? "停用" : "启用"}</small></span>
-    <button class="danger icon-only" title="删除用户" data-delete-user="${escapeAttr(user.phone)}">${icon("trash")}</button>
+    <span><strong>${escapeHtml(user.phone)}</strong><small>${escapeHtml(user.name || "-")} ? ${escapeHtml(user.role)} ? ${user.enabled === 0 ? "??" : "??"}</small></span>
+    <button class="danger icon-only" title="????" data-delete-user="${escapeAttr(user.phone)}">${icon("trash")}</button>
   </div>`;
 }
 
 function loginDialog() {
   return `<div class="dialog-backdrop">
     <form class="dialog" data-login-form>
-      <h2>${icon("unlock")} 授权登录</h2>
-      <p>首次部署时，第一个登录账号会成为超级管理员。</p>
-      <label>账号/手机号<input name="phone" required></label>
-      <label>密码<input name="password" type="password" required></label>
+      <h2>${icon("unlock")} ????</h2>
+      <p>??????????????????????</p>
+      <label>??/???<input name="phone" required></label>
+      <label>??<input name="password" type="password" required></label>
       <div class="form-error"></div>
       <div class="row-actions">
-        <button type="submit">登录</button>
-        <button class="secondary" type="button" data-close-login>关闭</button>
+        <button type="submit">??</button>
+        <button class="secondary" type="button" data-close-login>??</button>
       </div>
     </form>
   </div>`;
@@ -792,28 +896,28 @@ function isActiveJob(status) {
 
 function statusPill(status) {
   const labels = {
-    queued: "排队中",
-    running: "运行中",
-    paused: "已暂停",
-    paused_quota: "额度暂停",
-    completed: "已完成",
-    failed: "失败"
+    queued: "???",
+    running: "???",
+    paused: "???",
+    paused_quota: "????",
+    completed: "???",
+    failed: "??"
   };
-  return `<span class="status-pill ${escapeAttr(status)}">${escapeHtml(labels[status] || status || "未知")}</span>`;
+  return `<span class="status-pill ${escapeAttr(status)}">${escapeHtml(labels[status] || status || "??")}</span>`;
 }
 
 function screeningLabel(status) {
   const labels = {
-    include: "纳入",
-    maybe: "待定",
-    exclude: "排除",
-    pending: "未筛选"
+    include: "??",
+    maybe: "??",
+    exclude: "??",
+    pending: "???"
   };
-  return labels[status] || status || "未筛选";
+  return labels[status] || status || "???";
 }
 
 function purposeName(key) {
-  return key === "pdf" ? "PDF 原文" : key === "parse" ? "解析产物" : key === "export" ? "导出文件" : key;
+  return key === "pdf" ? "PDF ??" : key === "parse" ? "????" : key === "export" ? "????" : key;
 }
 
 function formatBytes(value) {
@@ -868,24 +972,24 @@ function demoResponse(path, options = {}) {
       d1: { projects: 2, literature: 486, extractions: 31, jobs: 7, documents: 28 },
       today: { usage: { "job:expand_query:created": 1, "job:analyze_abstracts:created": 2, "job:parse_and_analyze_pdfs:resume": 2 }, usedUnits: 46, dailyLimit: 800, remainingUnits: 754 },
       projects: [
-        { id: "prj_demo", title: "糖尿病远程干预证据综述", status: "active", literature_count: 286, bytes: 17825792 },
-        { id: "prj_arch", title: "术后康复管理", status: "archived", literature_count: 200, bytes: 6029312 }
+        { id: "prj_demo", title: "???????????", status: "active", literature_count: 286, bytes: 17825792 },
+        { id: "prj_arch", title: "??????", status: "archived", literature_count: 200, bytes: 6029312 }
       ]
     };
   }
   if (path === "/api/projects?deleted=1") {
-    return { projects: [{ id: "prj_deleted", title: "已删除的示例项目", status: "deleted", literature_count: 34, bytes: 1048576, deleted_at: new Date().toISOString() }] };
+    return { projects: [{ id: "prj_deleted", title: "????????", status: "deleted", literature_count: 34, bytes: 1048576, deleted_at: new Date().toISOString() }] };
   }
   if (path.startsWith("/api/projects/") && !path.includes("release") && !path.includes("archive") && options.method !== "DELETE") {
     return {
-      project: { id: "prj_demo", title: "糖尿病远程干预证据综述", status: "active", literature_count: 286, bytes: 17825792 },
+      project: { id: "prj_demo", title: "???????????", status: "active", literature_count: 286, bytes: 17825792 },
       literature: demoLiterature(),
       jobs: [{ id: "job_demo", project_id: "prj_demo", type: "parse_and_analyze_pdfs", status: "paused_quota", batch_limit: 15, processed_count: 30, total_count: 120, updated_at: new Date().toISOString() }]
     };
   }
-  if (path.startsWith("/api/projects")) return { projects: [{ id: "prj_demo", title: "糖尿病远程干预证据综述", status: "active", literature_count: 286, bytes: 17825792 }] };
-  if (path.startsWith("/api/admin/users")) return { users: [{ id: "usr_demo", phone: "admin", name: "超级管理员", role: "super_admin", enabled: 1 }] };
-  return { ok: true, project: { id: "prj_demo", title: "新证据项目", status: "active" }, job: { id: `job_${Date.now()}`, type: "expand_query", status: "queued" }, releasedBytes: 1048576, deletedCount: 1 };
+  if (path.startsWith("/api/projects")) return { projects: [{ id: "prj_demo", title: "???????????", status: "active", literature_count: 286, bytes: 17825792 }] };
+  if (path.startsWith("/api/admin/users")) return { users: [{ id: "usr_demo", phone: "admin", name: "?????", role: "super_admin", enabled: 1 }] };
+  return { ok: true, project: { id: "prj_demo", title: "?????", status: "active" }, job: { id: `job_${Date.now()}`, type: "expand_query", status: "queued" }, releasedBytes: 1048576, deletedCount: 1 };
 }
 
 Api.session().catch(() => {

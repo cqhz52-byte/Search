@@ -213,6 +213,7 @@ textarea { min-height: 86px; resize: vertical; }
   font-size: 12px;
   line-height: 1.35;
 }
+.workflow-cards,
 .step-results {
   display: grid;
   gap: 10px;
@@ -234,6 +235,7 @@ textarea { min-height: 86px; resize: vertical; }
   font-size: 13px;
   line-height: 1.45;
 }
+.workflow-card,
 .step-result-card {
   display: grid;
   gap: 10px;
@@ -242,28 +244,81 @@ textarea { min-height: 86px; resize: vertical; }
   padding: 12px;
   background: white;
 }
+.workflow-card.status-completed,
 .step-result-card.status-completed {
   border-color: #b9e7dc;
   background: #fbfffd;
 }
+.workflow-card.status-running,
 .step-result-card.status-running {
   border-color: #cfe0ff;
   background: #f6f9ff;
 }
+.workflow-card header,
 .step-result-card header {
   display: flex;
   align-items: flex-start;
   gap: 9px;
 }
+.workflow-card header .run-step-button {
+  margin-left: auto;
+}
+.workflow-card-title {
+  flex: 1;
+  min-width: 0;
+}
+.workflow-card-title strong {
+  overflow-wrap: anywhere;
+}
+.workflow-process {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border: 1px solid #e4ece7;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #f7faf8;
+  color: #40524b;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.process-dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  margin-top: 5px;
+  border-radius: 999px;
+  background: #b8c3bd;
+}
+.process-dot.running {
+  background: var(--brand-2);
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
+}
+.process-dot.done {
+  background: var(--brand);
+}
+.step-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.workflow-card-body {
+  display: grid;
+  gap: 10px;
+}
+.workflow-card header strong,
+.workflow-card header small,
 .step-result-card header strong,
 .step-result-card header small {
   display: block;
 }
+.workflow-card header small,
 .step-result-card header small {
   margin-top: 3px;
   color: var(--muted);
   font-size: 12px;
 }
+.workflow-card p,
 .step-result-card p {
   margin: 0;
   color: #31403b;
