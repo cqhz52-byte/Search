@@ -1,4 +1,4 @@
-const APP_VERSION = "2026.07.14.9";
+const APP_VERSION = "2026.07.14.10";
 
 const state = {
   usage: null,
@@ -486,7 +486,7 @@ function bindEvents() {
 }
 
 function updateBanner() {
-  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>AI 检索词扩充改为同义词、缩写、设备名、技术变体和主题词扩展，不再按翻译处理。</span></div><button data-action="dismiss-update">知道了</button></div>';
+  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>检索摘要已改为 PubMed + Europe PMC 双源真实检索，并会在严格组合命中过少时自动放宽策略。</span></div><button data-action="dismiss-update">知道了</button></div>';
 }
 
 function mobileTabbar() {

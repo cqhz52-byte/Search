@@ -79,20 +79,61 @@ async function runExpandQuery(context) {
 
 async function runSearchAbstracts(context) {
   const latest = await latestArtifact(context.db, context.project.id, "expand_query");
-  const query = latest?.data?.queries?.europePmc || latest?.data?.queries?.pubmed || context.project.question || context.project.title;
-  const records = await searchEuropePmc(query, 15);
+  const plans = buildSearchPlans(context.project, latest);
+  const records = [];
+  const seen = new Set();
+  const stats = [];
+  const primaryHitSources = new Set();
+
+  for (const plan of plans) {
+    if (records.length >= 20 && plan.kind !== "primary") continue;
+    if (plan.kind !== "primary" && primaryHitSources.has(plan.source)) continue;
+    let result = { total: 0, records: [], error: "" };
+    try {
+      result = plan.source === "PubMed"
+        ? await searchPubMed(plan.query, plan.limit)
+        : await searchEuropePmc(plan.query, plan.limit);
+    } catch (error) {
+      result.error = error.message || String(error);
+    }
+    let used = 0;
+    for (const record of result.records) {
+      const key = literatureKey(record);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      records.push(record);
+      used += 1;
+      if (records.length >= 30) break;
+    }
+    stats.push({
+      "来源": plan.source,
+      "策略": plan.label,
+      "命中总数": result.error ? "失败" : String(result.total),
+      "本次采用": String(used),
+      "说明": result.error || (used ? "已合并去重" : "未新增")
+    });
+    if (plan.kind === "primary" && result.total > 0) primaryHitSources.add(plan.source);
+  }
+
   let inserted = 0;
   for (const record of records) {
     if (await upsertLiterature(context.db, context.project.id, record, context.now)) inserted += 1;
   }
   const rows = records.map((item) => ({ "题名": item.title, "来源": item.source || "Europe PMC", "年份": item.year || "-", "摘要": item.abstract || "无摘要" }));
+  const pubmedPrimary = plans.find((item) => item.source === "PubMed" && item.kind === "primary")?.query || "";
+  const europePrimary = plans.find((item) => item.source === "Europe PMC" && item.kind === "primary")?.query || "";
+  const pubmedCount = stats.filter((item) => item["来源"] === "PubMed").reduce((sum, item) => sum + (Number(item["命中总数"]) || 0), 0);
+  const europeCount = stats.filter((item) => item["来源"] === "Europe PMC").reduce((sum, item) => sum + (Number(item["命中总数"]) || 0), 0);
+  const fallbackUsed = stats.some((item) => item["策略"] !== "PICO 组合" && Number(item["本次采用"]) > 0);
   return {
     type: context.type,
     status: "completed",
-    summary: `已真实检索 Europe PMC，获得 ${records.length} 条摘要，新增 ${inserted} 条题录。`,
-    data: { query, count: records.length, inserted },
+    summary: `已真实检索 PubMed 和 Europe PMC，合并去重获得 ${records.length} 条摘要，新增 ${inserted} 条题录。${fallbackUsed ? "严格组合命中过少时已自动放宽检索，避免漏检。" : ""}`,
+    data: { pubmedQuery: pubmedPrimary, europePmcQuery: europePrimary, count: records.length, inserted, pubmedCount, europePmcCount: europeCount, stats },
     sections: [
-      { title: "实际检索式", code: query },
+      { title: "PubMed 检索式", code: pubmedPrimary },
+      { title: "Europe PMC 检索式", code: europePrimary },
+      { title: "检索统计", rows: stats },
       { title: "摘要结果", rows }
     ]
   };
@@ -253,13 +294,31 @@ async function deepseekJson(apiKey, prompt) {
   return JSON.parse(content);
 }
 
+async function searchPubMed(query, pageSize) {
+  const clean = normalizeQuery(query).slice(0, 1200) || "systematic review";
+  const searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&retmode=json&retmax=${pageSize}&sort=relevance&term=${encodeURIComponent(clean)}`;
+  const searchResponse = await fetch(searchUrl, { headers: { Accept: "application/json" } });
+  if (!searchResponse.ok) throw new Error(`PubMed 检索失败：${searchResponse.status}`);
+  const searchData = await searchResponse.json();
+  const ids = searchData.esearchresult?.idlist || [];
+  const total = Number(searchData.esearchresult?.count || 0) || ids.length;
+  if (!ids.length) return { total, records: [] };
+
+  const fetchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&retmode=xml&id=${ids.join(",")}`;
+  const fetchResponse = await fetch(fetchUrl, { headers: { Accept: "application/xml" } });
+  if (!fetchResponse.ok) throw new Error(`PubMed 摘要读取失败：${fetchResponse.status}`);
+  const xml = await fetchResponse.text();
+  const records = [...xml.matchAll(/<PubmedArticle\b[\s\S]*?<\/PubmedArticle>/g)].map((match) => parsePubMedArticle(match[0])).filter((item) => item.title);
+  return { total, records };
+}
+
 async function searchEuropePmc(query, pageSize) {
-  const clean = safeText(query).replace(/\[[^\]]+\]/g, "").replace(/[“”]/g, "\"").slice(0, 500) || "systematic review";
+  const clean = normalizeQuery(query).slice(0, 900) || "systematic review";
   const url = `https://www.ebi.ac.uk/europepmc/webservices/rest/search?format=json&resultType=core&pageSize=${pageSize}&query=${encodeURIComponent(clean)}`;
   const response = await fetch(url, { headers: { Accept: "application/json" } });
   if (!response.ok) throw new Error(`Europe PMC 检索失败：${response.status}`);
   const data = await response.json();
-  return (data.resultList?.result || []).map((item) => ({
+  const records = (data.resultList?.result || []).map((item) => ({
     title: safeText(item.title, "Untitled").slice(0, 500),
     doi: safeText(item.doi),
     pmid: safeText(item.pmid),
@@ -269,6 +328,170 @@ async function searchEuropePmc(query, pageSize) {
     journal: safeText(item.journalTitle).slice(0, 200),
     abstract: safeText(item.abstractText).replace(/<[^>]+>/g, " ").slice(0, 4000)
   }));
+  return { total: Number(data.hitCount || 0) || records.length, records };
+}
+
+function buildSearchPlans(project, latest) {
+  const concepts = extractConcepts(project, latest);
+  const population = concepts.population.length ? concepts.population : splitQuestionTerms(project.question || project.title).slice(0, 6);
+  const intervention = concepts.intervention.length ? concepts.intervention : [];
+  const allTerms = uniqueTerms([...population, ...intervention, ...concepts.other]).slice(0, 14);
+  const broad = allTerms.length ? allTerms : splitQuestionTerms(project.question || project.title).slice(0, 10);
+
+  const pubmedP = buildPubMedClause(population);
+  const pubmedI = buildPubMedClause(intervention);
+  const europeP = buildEuropeClause(population);
+  const europeI = buildEuropeClause(intervention);
+  const fallbackPubmed = latest?.data?.queries?.pubmed || buildPubMedClause(broad);
+  const fallbackEurope = latest?.data?.queries?.europePmc || buildEuropeClause(broad);
+  const plans = [];
+
+  if (pubmedP && pubmedI) plans.push({ source: "PubMed", kind: "primary", label: "PICO 组合", query: `${pubmedP} AND ${pubmedI}`, limit: 15 });
+  plans.push({ source: "PubMed", kind: "fallback", label: "AI 原始式/宽检索", query: normalizePubMedQuery(fallbackPubmed), limit: 15 });
+  if (pubmedP) plans.push({ source: "PubMed", kind: "fallback", label: "人群/疾病", query: pubmedP, limit: 10 });
+  if (pubmedI) plans.push({ source: "PubMed", kind: "fallback", label: "干预/技术", query: pubmedI, limit: 10 });
+
+  if (europeP && europeI) plans.push({ source: "Europe PMC", kind: "primary", label: "PICO 组合", query: `${europeP} AND ${europeI}`, limit: 15 });
+  plans.push({ source: "Europe PMC", kind: "fallback", label: "AI 原始式/宽检索", query: normalizeEuropeQuery(fallbackEurope), limit: 15 });
+  if (europeP) plans.push({ source: "Europe PMC", kind: "fallback", label: "人群/疾病", query: europeP, limit: 10 });
+  if (europeI) plans.push({ source: "Europe PMC", kind: "fallback", label: "干预/技术", query: europeI, limit: 10 });
+
+  return dedupePlans(plans);
+}
+
+function extractConcepts(project, latest) {
+  const result = { population: [], intervention: [], other: [] };
+  const concepts = Array.isArray(latest?.data?.concepts) ? latest.data.concepts : [];
+  for (const concept of concepts) {
+    const terms = uniqueTerms([concept.name, ...asList(concept.en), ...asList(concept.zh), ...asList(concept.mesh), ...asList(concept.freeText)]).slice(0, 12);
+    const role = safeText(concept.role).toUpperCase();
+    if (role === "P") result.population.push(...terms);
+    else if (role === "I") result.intervention.push(...terms);
+    else result.other.push(...terms.slice(0, 4));
+  }
+  const lower = `${project.title || ""} ${project.question || ""}`.toLowerCase();
+  if (!result.intervention.length && /(不可逆电穿孔|ire|electroporation|pulsed electric|nanoknife|陡脉冲|电场消融)/i.test(lower)) {
+    result.intervention.push("irreversible electroporation", "IRE", "pulsed electric field", "PEF", "electric field ablation", "NanoKnife", "steep pulse", "不可逆电穿孔", "陡脉冲", "电场消融", "脉冲电场消融");
+  }
+  if (!result.population.length && /(胰腺|pancrea)/i.test(lower)) {
+    result.population.push("pancreatic cancer", "pancreatic carcinoma", "pancreatic neoplasm", "pancreatic tumor", "pancreatic adenocarcinoma", "PDAC", "pancreas cancer", "胰腺癌");
+  }
+  return {
+    population: uniqueTerms(result.population).slice(0, 12),
+    intervention: uniqueTerms(result.intervention).slice(0, 12),
+    other: uniqueTerms(result.other).slice(0, 8)
+  };
+}
+
+function buildPubMedClause(terms) {
+  const cleaned = uniqueTerms(terms).slice(0, 12);
+  if (!cleaned.length) return "";
+  return `(${cleaned.map((term) => {
+    const quoted = quoteQueryTerm(term);
+    return /\s/.test(term) ? `${quoted}[Title/Abstract]` : `(${quoted}[Title/Abstract] OR ${quoted}[All Fields])`;
+  }).join(" OR ")})`;
+}
+
+function buildEuropeClause(terms) {
+  const cleaned = uniqueTerms(terms).slice(0, 12);
+  if (!cleaned.length) return "";
+  return `(${cleaned.map(quoteQueryTerm).join(" OR ")})`;
+}
+
+function normalizePubMedQuery(query) {
+  const clean = normalizeQuery(query);
+  if (!clean) return "";
+  return clean.replace(/TITLE_ABS\(([^)]+)\)/gi, "($1)").replace(/\bTITLE_ABS:/gi, "");
+}
+
+function normalizeEuropeQuery(query) {
+  return normalizePubMedQuery(query).replace(/\[[^\]]+\]/g, "");
+}
+
+function normalizeQuery(query) {
+  return safeText(query).replace(/[“”]/g, "\"").replace(/\s+/g, " ").trim();
+}
+
+function quoteQueryTerm(term) {
+  const clean = safeText(term).replace(/[“”"]/g, "").replace(/[()]/g, " ").replace(/\s+/g, " ").trim();
+  if (!clean) return "\"\"";
+  return `"${clean.slice(0, 120)}"`;
+}
+
+function uniqueTerms(terms) {
+  const seen = new Set();
+  const result = [];
+  for (const term of terms || []) {
+    const clean = safeText(term).replace(/[“”"]/g, "").replace(/\s+/g, " ").trim();
+    if (!clean || clean.length < 2) continue;
+    const key = clean.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(clean);
+  }
+  return result;
+}
+
+function splitQuestionTerms(text) {
+  return safeText(text)
+    .split(/[，,；;、\n]/)
+    .map((item) => item.replace(/^(P|I|C|O)[:：]/i, "").trim())
+    .filter(Boolean);
+}
+
+function dedupePlans(plans) {
+  const seen = new Set();
+  const result = [];
+  for (const plan of plans) {
+    const query = normalizeQuery(plan.query);
+    if (!query) continue;
+    const key = `${plan.source}:${query.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push({ ...plan, query });
+  }
+  return result;
+}
+
+function literatureKey(item) {
+  return (item.pmid && `pmid:${item.pmid}`) || (item.pmcid && `pmcid:${item.pmcid}`) || (item.doi && `doi:${item.doi.toLowerCase()}`) || `title:${safeText(item.title).toLowerCase()}`;
+}
+
+function parsePubMedArticle(xml) {
+  const articleTitle = readXml(xml, "ArticleTitle");
+  const abstracts = [...xml.matchAll(/<AbstractText\b[^>]*>([\s\S]*?)<\/AbstractText>/g)].map((match) => cleanXml(match[1])).filter(Boolean);
+  return {
+    title: cleanXml(articleTitle).slice(0, 500),
+    doi: readArticleId(xml, "doi"),
+    pmid: cleanXml(readXml(xml, "PMID")),
+    pmcid: readArticleId(xml, "pmc").replace(/^PMC/i, "PMC"),
+    source: "PubMed",
+    year: Number(cleanXml(readXml(xml, "Year")) || 0) || null,
+    journal: cleanXml(readXml(xml.match(/<Journal\b[\s\S]*?<\/Journal>/)?.[0] || "", "Title")).slice(0, 200),
+    abstract: abstracts.join(" ").slice(0, 4000)
+  };
+}
+
+function readArticleId(xml, type) {
+  const pattern = new RegExp(`<ArticleId\\b[^>]*IdType=["']${type}["'][^>]*>([\\s\\S]*?)<\\/ArticleId>`, "i");
+  return cleanXml(xml.match(pattern)?.[1] || "");
+}
+
+function readXml(xml, tag) {
+  const pattern = new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}>`, "i");
+  return xml.match(pattern)?.[1] || "";
+}
+
+function cleanXml(value) {
+  return safeText(value)
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 async function upsertLiterature(db, projectId, item, now) {
