@@ -1,4 +1,4 @@
-const APP_VERSION = "2026.07.14.13";
+const APP_VERSION = "2026.07.14.14";
 
 const state = {
   usage: null,
@@ -38,7 +38,7 @@ const jobNotes = {
   analyze_abstracts: "根据纳入/排除标准聚焦到候选文献。",
   generate_download_list: "整理 DOI、PMID、开放全文入口和失败待办。",
   download_pdfs: "仅下载开放或已授权来源，避免反复重试。",
-  parse_and_analyze_pdfs: "LlamaParse 识别解析，DeepSeek 结构化提取。",
+  parse_and_analyze_pdfs: "文本型全文抽取，DeepSeek 结构化提取；扫描版再考虑 OCR。",
   generate_analysis_results: "生成证据表、限制说明和结论草稿。"
 };
 
@@ -507,7 +507,7 @@ function bindEvents() {
 }
 
 function updateBanner() {
-  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>手机端结果改为卡片式；AI 摘要分析显示中文摘要并支持手工纳入/待定/排除；PDF 下载增加 PMC 多地址兜底。</span></div><button data-action="dismiss-update">知道了</button></div>';
+  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>全文解析改为文本型全文/XML 抽取 + DeepSeek 结构化分析，不再默认依赖 LlamaParse。</span></div><button data-action="dismiss-update">知道了</button></div>';
 }
 
 function mobileTabbar() {
@@ -796,9 +796,9 @@ function buildStepInput(type, detail) {
       ]
     }),
     parse_and_analyze_pdfs: () => ({
-      summary: "本步骤输入是已下载或用户上传的 PDF；这里只做文档识别和结构化提取，不做原排版翻译。",
+      summary: "本步骤输入是纳入/待定文献的开放全文或已下载 PDF；优先抽取可复制文字，不做原排版翻译，不默认调用 LlamaParse。",
       sections: [
-        { title: "待解析全文", rows: included.map((item) => ({ "题名": item.title, "PDF状态": item.pdf_status || "not_requested", "解析状态": item.parse_status || "not_requested" })) },
+        { title: "待解析全文", rows: included.map((item) => ({ "题名": item.title, "PMCID": item.pmcid || "-", "PDF状态": item.pdf_status || "not_requested", "解析状态": item.parse_status || "not_requested" })) },
         { title: "提取字段", items: ["研究目的", "研究设计", "干预方式", "对照方式", "结局指标", "关键结果", "证据限制"] }
       ]
     }),
@@ -868,9 +868,10 @@ function buildStepArtifact(type, project, detail) {
     }),
     parse_and_analyze_pdfs: () => ({
       status: "completed",
-      summary: "已生成全文解析后的结构化提取表样例；这里不做原排版翻译，只保留可审查字段。",
+      summary: "已完成文本型全文抽取和结构化提取样例；这里不做原排版翻译，只保留可审查字段。",
       sections: [
-        { title: "结构化提取", rows: included.map((item) => ({ "文献": item.title, "研究目的": "评估干预对目标结局的影响", "干预方式": "数字化/远程/AI 辅助干预", "结局指标": "有效性、安全性、依从性", "证据限制": "样本量、偏倚风险、随访时间需复核" })) }
+        { title: "文本抽取来源", rows: included.map((item) => ({ "题录ID": item.id, "题名": item.title, "来源": item.pmcid ? "Europe PMC 全文 XML" : "摘要兜底", "抽取字符数": item.pmcid ? "12000+" : String((item.abstract || "").length), "说明": item.pmcid ? "已从开放全文 XML 抽取可复制正文文本" : "没有开放全文，使用摘要兜底" })) },
+        { title: "结构化提取", rows: included.map((item) => ({ "文献": item.title, "研究目的": "评估干预对目标结局的影响", "研究设计": "按全文方法学字段提取", "干预方式": "从全文 Intervention/Methods 抽取", "结局指标": "有效性、安全性、并发症或生存结局", "证据限制": "样本量、偏倚风险、随访时间需复核" })) }
       ]
     }),
     generate_analysis_results: () => ({

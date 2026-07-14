@@ -235,31 +235,49 @@ async function runDownloadPdfs(context) {
 
 async function runParseAndAnalyzePdfs(context) {
   const key = await getDeepseekKey(context.db);
-  const literature = await getCandidateLiterature(context.db, context.project.id, 10);
+  const literature = await getCandidateLiterature(context.db, context.project.id, 8);
   if (!literature.length) return emptyArtifact(context.type, "还没有纳入/待定文献，请先执行摘要分析。");
+  const documents = [];
+  for (const item of literature) {
+    documents.push(await extractFullTextForAnalysis(item));
+  }
+  const analyzable = documents.filter((item) => item.text);
+  if (!analyzable.length) return emptyArtifact(context.type, "还没有可抽取的全文或摘要文本。文本型开放全文会优先通过 PMCID 抽取；扫描版或受限 PDF 需要人工上传/本地处理。");
   const prompt = [
-    "请基于以下文献题名和摘要做结构化证据提取。仅输出 JSON。",
-    "JSON schema: {\"rows\":[{\"id\":\"\",\"purpose\":\"\",\"intervention\":\"\",\"outcomes\":\"\",\"limitations\":\"\"}],\"summary\":\"\"}",
-    JSON.stringify(literature.map((item) => ({ id: item.id, title: item.title, abstract: item.abstract }))).slice(0, 12000)
+    "请基于以下文献全文文本做结构化证据提取。仅输出 JSON。",
+    "这些文本来自可复制文字的开放全文 XML 或摘要兜底，不做原排版翻译，也不做 OCR。",
+    "JSON schema: {\"rows\":[{\"id\":\"\",\"purpose\":\"\",\"design\":\"\",\"intervention\":\"\",\"comparator\":\"\",\"outcomes\":\"\",\"results\":\"\",\"limitations\":\"\",\"evidenceLevel\":\"\",\"fullTextBasis\":\"\"}],\"summary\":\"\"}",
+    `研究问题：${context.project.question || context.project.title}`,
+    JSON.stringify(analyzable.map((item) => ({
+      id: item.id,
+      title: item.title,
+      source: item.source,
+      textChars: item.text.length,
+      text: item.text.slice(0, 9000)
+    }))).slice(0, 70000)
   ].join("\n");
   const data = await deepseekJson(key, prompt);
   const rows = Array.isArray(data.rows) ? data.rows : [];
   for (const item of rows) {
     const lit = literature.find((row) => row.id === item.id);
     if (!lit) continue;
+    const doc = documents.find((row) => row.id === item.id);
     await context.db.prepare("INSERT INTO extractions (id, project_id, literature_id, status, confidence, compact_json, source_refs_json, created_at, updated_at) VALUES (?, ?, ?, 'draft', 0.7, ?, '[]', ?, ?)")
-      .bind(randomId("ext"), context.project.id, lit.id, JSON.stringify(item), context.now, context.now)
+      .bind(randomId("ext"), context.project.id, lit.id, JSON.stringify({ ...item, textSource: doc?.source || "" }), context.now, context.now)
       .run();
-    await context.db.prepare("UPDATE literature SET extraction_status = 'done', parse_status = CASE WHEN parse_status = 'not_requested' THEN 'abstract_only' ELSE parse_status END, updated_at = ? WHERE id = ?")
-      .bind(context.now, lit.id)
+    await context.db.prepare("UPDATE literature SET extraction_status = 'done', parse_status = ?, updated_at = ? WHERE id = ?")
+      .bind(doc?.fullText ? "fulltext_text" : "abstract_only", context.now, lit.id)
       .run();
   }
   return {
     type: context.type,
     status: "completed",
-    summary: data.summary || "DeepSeek 已基于摘要/可用全文字段生成结构化提取。",
-    data,
-    sections: [{ title: "结构化提取", rows: rows.map((item) => ({ "题录ID": item.id, "研究目的": item.purpose, "干预方式": item.intervention, "结局指标": item.outcomes, "证据限制": item.limitations })) }]
+    summary: data.summary || `已对 ${analyzable.length} 篇文献进行文本型全文/摘要抽取，并由 DeepSeek 生成结构化提取。`,
+    data: { ...data, analyzedCount: analyzable.length, fullTextCount: documents.filter((item) => item.fullText).length },
+    sections: [
+      { title: "文本抽取来源", rows: documents.map((item) => ({ "题录ID": item.id, "题名": item.title, "来源": item.source, "抽取字符数": item.text.length, "说明": item.note })) },
+      { title: "结构化提取", rows: rows.map((item) => ({ "题录ID": item.id, "研究目的": item.purpose, "研究设计": item.design || "", "干预方式": item.intervention, "对照": item.comparator || "", "结局指标": item.outcomes, "关键结果": item.results || "", "证据限制": item.limitations, "依据": item.fullTextBasis || "" })) }
+    ]
   };
 }
 
@@ -564,6 +582,68 @@ async function getLiterature(db, projectId, limit) {
 async function getCandidateLiterature(db, projectId, limit) {
   const rows = await db.prepare("SELECT * FROM literature WHERE project_id = ? AND deleted_at IS NULL AND screening_status IN ('include', 'maybe') ORDER BY updated_at DESC LIMIT ?").bind(projectId, limit).all();
   return rows.results || [];
+}
+
+async function extractFullTextForAnalysis(item) {
+  const base = {
+    id: item.id,
+    title: item.title,
+    source: "摘要兜底",
+    text: safeText(item.abstract).slice(0, 4000),
+    fullText: false,
+    note: item.abstract ? "未取得开放全文 XML，使用摘要兜底。" : "没有可用摘要或全文。"
+  };
+  if (!item.pmcid) return base;
+  const pmcid = safeText(item.pmcid).replace(/^PMC/i, "PMC");
+  try {
+    const response = await fetch(`https://www.ebi.ac.uk/europepmc/webservices/rest/${encodeURIComponent(pmcid)}/fullTextXML`, {
+      headers: { Accept: "application/xml,text/xml,*/*" }
+    });
+    if (!response.ok) return { ...base, note: `全文 XML 获取失败：${response.status}，使用摘要兜底。` };
+    const xml = await response.text();
+    const text = extractTextFromFullTextXml(xml);
+    if (text.length < 800) return { ...base, note: "全文 XML 文本过短，使用摘要兜底。" };
+    return {
+      id: item.id,
+      title: item.title,
+      source: "Europe PMC 全文 XML",
+      text,
+      fullText: true,
+      note: "已从开放全文 XML 抽取可复制正文文本。"
+    };
+  } catch (error) {
+    return { ...base, note: `全文 XML 获取失败：${error.message}，使用摘要兜底。` };
+  }
+}
+
+function extractTextFromFullTextXml(xml) {
+  const front = readXml(xml, "front");
+  const abstract = readXml(front, "abstract");
+  const body = readXml(xml, "body");
+  const combined = [abstract, body].filter(Boolean).join("\n\n");
+  return cleanFullTextXml(combined).slice(0, 45000);
+}
+
+function cleanFullTextXml(xml) {
+  return safeText(xml)
+    .replace(/<ref-list\b[\s\S]*?<\/ref-list>/gi, " ")
+    .replace(/<table-wrap\b[\s\S]*?<\/table-wrap>/gi, " ")
+    .replace(/<fig\b[\s\S]*?<\/fig>/gi, " ")
+    .replace(/<xref\b[^>]*>[\s\S]*?<\/xref>/gi, " ")
+    .replace(/<title\b[^>]*>/gi, "\n\n")
+    .replace(/<\/title>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<\/sec>/gi, "\n\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n\s+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 async function tryDownloadOpenPdf(context, item) {
