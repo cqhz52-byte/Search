@@ -31,6 +31,10 @@ button {
   font-weight: 800;
   cursor: pointer;
 }
+button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
 button.secondary { border-color: var(--line); background: white; color: var(--ink); }
 button.danger { border-color: #ffd0cc; background: var(--danger-bg); color: var(--danger); }
 .icon-button, .icon-only { width: 40px; padding: 0; border-color: var(--line); background: white; color: var(--ink); }
@@ -40,6 +44,31 @@ button.danger { border-color: #ffd0cc; background: var(--danger-bg); color: var(
 .topbar p { margin: 6px 0 0; color: var(--muted); line-height: 1.55; }
 .top-actions { display: flex; align-items: center; gap: 8px; }
 .toast { margin-bottom: 12px; border: 1px solid #d7e5ff; border-radius: 8px; padding: 10px 12px; background: #f3f7ff; color: #174182; font-weight: 800; }
+.activity-bar {
+  position: relative;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  margin-bottom: 12px;
+  border: 1px solid #c7efe5;
+  border-radius: 8px;
+  background: #edfdf8;
+  color: var(--brand);
+  font-size: 13px;
+  font-weight: 900;
+}
+.activity-bar span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 38%;
+  background: linear-gradient(90deg, transparent, rgba(15, 118, 110, 0.22), transparent);
+  animation: sweep 1.3s ease-in-out infinite;
+}
+.activity-bar strong {
+  position: relative;
+  padding: 0 12px;
+}
 .layout {
   display: grid;
   grid-template-columns: minmax(320px, 0.85fr) minmax(280px, 0.75fr) minmax(520px, 1.5fr);
@@ -99,6 +128,10 @@ textarea { min-height: 86px; resize: vertical; }
   color: var(--ink);
   text-align: left;
 }
+.pipeline-step.is-busy {
+  border-color: var(--brand);
+  background: #ecf8f5;
+}
 .pipeline-step > span:nth-child(2) {
   flex: 1;
   min-width: 0;
@@ -125,6 +158,31 @@ textarea { min-height: 86px; resize: vertical; }
   font-size: 13px;
   font-weight: 950;
 }
+.job-title-line { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.status-pill {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0 8px;
+  background: #edf2f7;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+.status-pill.queued, .status-pill.running { background: #e7f7ef; color: #0f6b45; }
+.status-pill.paused_quota, .status-pill.paused { background: #fff6df; color: #8a5a00; }
+.status-pill.failed { background: #fff1f0; color: var(--danger); }
+.job-row.status-queued, .job-row.status-running {
+  border-color: #a7e6d8;
+  background: #fbfffd;
+}
+.job-progress.active span {
+  background-size: 40px 40px;
+  background-image: linear-gradient(45deg, rgba(255,255,255,.35) 25%, transparent 25%, transparent 50%, rgba(255,255,255,.35) 50%, rgba(255,255,255,.35) 75%, transparent 75%, transparent);
+  animation: progress-stripes 1s linear infinite;
+}
 .table-wrap { overflow: auto; margin-top: 12px; border: 1px solid var(--line); border-radius: 8px; }
 table { width: 100%; min-width: 680px; border-collapse: collapse; background: white; }
 th, td { padding: 11px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; font-size: 14px; }
@@ -143,6 +201,8 @@ td strong { display: block; max-width: 440px; }
 .form-error { min-height: 18px; color: var(--danger); font-weight: 850; }
 .spin { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+@keyframes sweep { 0% { transform: translateX(-100%); } 100% { transform: translateX(270%); } }
+@keyframes progress-stripes { to { background-position: 40px 0; } }
 @media (max-width: 1120px) {
   .layout { grid-template-columns: 1fr 1fr; grid-template-areas: "resource resource" "projects detail" "trash detail" "users detail"; }
 }

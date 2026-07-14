@@ -7,6 +7,7 @@ const state = {
   selectedId: "",
   message: "",
   loading: false,
+  busy: {},
   loginOpen: false
 };
 
@@ -97,16 +98,26 @@ async function refresh(nextSelectedId = state.selectedId) {
   }
 }
 
-async function runAction(label, action) {
+async function runAction(label, action, key = label) {
+  state.busy[key] = label;
+  const minimumVisible = new Promise((resolve) => setTimeout(resolve, 700));
   state.message = `${label}...`;
   render();
   try {
     const result = await action();
+    if (result?.job && state.detail?.project?.id === (result.job.projectId || result.job.project_id)) {
+      state.detail.jobs = [normalizeJob(result.job), ...(state.detail.jobs || []).filter((job) => job.id !== result.job.id)];
+      render();
+    }
     const released = result?.releasedBytes ? `，释放 ${formatBytes(result.releasedBytes)}` : "";
     state.message = `${label}完成${released}`;
     await refresh(state.selectedId);
   } catch (error) {
     state.message = error.message || `${label}失败`;
+    render();
+  } finally {
+    await minimumVisible;
+    delete state.busy[key];
     render();
   }
 }
@@ -115,6 +126,7 @@ function render() {
   const usage = state.usage;
   const selectedProject = state.detail?.project || state.projects.find((project) => project.id === state.selectedId);
   const quotaPercent = usage ? Math.min(100, Math.round((usage.today.usedUnits / Math.max(1, usage.today.dailyLimit)) * 100)) : 0;
+  const activeCount = Object.keys(state.busy).length;
   app.innerHTML = `
     <div class="app-shell">
       <header class="topbar">
@@ -128,9 +140,10 @@ function render() {
         </div>
       </header>
       ${state.message ? `<div class="toast">${escapeHtml(state.message)}</div>` : ""}
+      ${state.loading || activeCount ? `<div class="activity-bar"><span></span><strong>${state.loading ? "正在刷新数据" : `正在执行 ${activeCount} 个操作`}</strong></div>` : ""}
       <main class="layout">
         <section class="resource-panel">
-          ${sectionTitle("gauge", "资源中心", `<button data-action="cleanup">${icon("recycle")} 清理临时文件</button>`)}
+          ${sectionTitle("gauge", "资源中心", `<button data-action="cleanup" ${busyAttr("cleanup")}>${busyIcon("recycle", "cleanup")} ${isBusy("cleanup") ? "\u6e05\u7406\u4e2d" : "\u6e05\u7406\u4e34\u65f6\u6587\u4ef6"}</button>`)}
           <div class="metric-grid">
             ${metric("R2 对象", usage ? usage.r2.totalObjects : "-", usage ? formatBytes(usage.r2.totalBytes) : "读取中")}
             ${metric("D1 题录", usage ? usage.d1.literature || 0 : "-", `${usage?.d1.projects || 0} 个项目`)}
@@ -179,48 +192,51 @@ function bindEvents() {
     state.loginOpen = true;
     render();
   });
-  document.querySelector("[data-action='cleanup']")?.addEventListener("click", () => runAction("清理临时文件", Api.cleanupTemp));
+  document.querySelector("[data-action='cleanup']")?.addEventListener("click", () => runAction("\u6e05\u7406\u4e34\u65f6\u6587\u4ef6", Api.cleanupTemp, "cleanup"));
   document.querySelectorAll("[data-select-project]").forEach((button) => button.addEventListener("click", () => refresh(button.dataset.selectProject)));
   document.querySelector("[data-create-project]")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const result = await Api.createProject(form.get("title") || "新证据项目", form.get("question") || "");
+    const result = await Api.createProject(form.get("title") || "\u65b0\u8bc1\u636e\u9879\u76ee", form.get("question") || "");
     await refresh(result.project.id);
   });
   document.querySelectorAll("[data-project-action]").forEach((button) => button.addEventListener("click", () => {
     const id = button.dataset.projectId;
     const action = button.dataset.projectAction;
     const map = {
-      releasePdfs: ["释放 PDF", () => Api.releasePdfs(id)],
-      releaseParse: ["释放解析产物", () => Api.releaseParseArtifacts(id)],
-      archive: ["归档项目", () => Api.archiveProject(id)],
-      delete: ["删除项目", () => Api.deleteProject(id)]
+      releasePdfs: ["\u91ca\u653e PDF", () => Api.releasePdfs(id)],
+      releaseParse: ["\u91ca\u653e\u89e3\u6790\u4ea7\u7269", () => Api.releaseParseArtifacts(id)],
+      archive: ["\u5f52\u6863\u9879\u76ee", () => Api.archiveProject(id)],
+      delete: ["\u5220\u9664\u9879\u76ee", () => Api.deleteProject(id)]
     };
-    runAction(map[action][0], map[action][1]);
+    runAction(map[action][0], map[action][1], `project:${action}:${id}`);
   }));
   document.querySelectorAll("[data-job-type]").forEach((button) => button.addEventListener("click", () => {
-    runAction(`启动${jobLabels[button.dataset.jobType]}`, () => Api.createJob(button.dataset.projectId, button.dataset.jobType));
+    const key = `job:${button.dataset.projectId}:${button.dataset.jobType}`;
+    runAction(`\u542f\u52a8${jobLabels[button.dataset.jobType]}`, () => Api.createJob(button.dataset.projectId, button.dataset.jobType), key);
   }));
   document.querySelectorAll("[data-job-action]").forEach((button) => button.addEventListener("click", () => {
     const action = button.dataset.jobAction === "pause" ? Api.pauseJob : Api.resumeJob;
-    runAction(button.dataset.jobAction === "pause" ? "暂停任务" : "恢复任务", () => action(button.dataset.jobId));
+    const label = button.dataset.jobAction === "pause" ? "\u6682\u505c\u4efb\u52a1" : "\u6062\u590d\u4efb\u52a1";
+    runAction(label, () => action(button.dataset.jobId), `job-action:${button.dataset.jobAction}:${button.dataset.jobId}`);
   }));
   document.querySelectorAll("[data-trash-action]").forEach((button) => button.addEventListener("click", () => {
     const action = button.dataset.trashAction === "restore" ? Api.restore : Api.permanentDelete;
-    runAction(button.dataset.trashAction === "restore" ? "恢复项目" : "永久释放", () => action(button.dataset.projectId));
+    const label = button.dataset.trashAction === "restore" ? "\u6062\u590d\u9879\u76ee" : "\u6c38\u4e45\u91ca\u653e";
+    runAction(label, () => action(button.dataset.projectId), `trash:${button.dataset.trashAction}:${button.dataset.projectId}`);
   }));
   document.querySelector("[data-user-form]")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    await runAction("保存授权用户", () => Api.saveUser({
+    await runAction("\u4fdd\u5b58\u6388\u6743\u7528\u6237", () => Api.saveUser({
       phone: form.get("phone"),
       name: form.get("name"),
       role: form.get("role"),
       password: form.get("password")
-    }));
+    }), "user:save");
   });
   document.querySelectorAll("[data-delete-user]").forEach((button) => button.addEventListener("click", () => {
-    runAction("删除授权用户", () => Api.deleteUser(button.dataset.deleteUser));
+    runAction("\u5220\u9664\u6388\u6743\u7528\u6237", () => Api.deleteUser(button.dataset.deleteUser), `user:delete:${button.dataset.deleteUser}`);
   }));
   document.querySelector("[data-login-form]")?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -228,10 +244,10 @@ function bindEvents() {
     try {
       await Api.login(form.get("phone"), form.get("password"));
       state.loginOpen = false;
-      state.message = "登录成功";
+      state.message = "\u767b\u5f55\u6210\u529f";
       await refresh();
     } catch (error) {
-      document.querySelector(".form-error").textContent = error.message || "登录失败";
+      document.querySelector(".form-error").textContent = error.message || "\u767b\u5f55\u5931\u8d25";
     }
   });
   document.querySelector("[data-close-login]")?.addEventListener("click", () => {
@@ -275,41 +291,48 @@ function projectRow(project) {
 }
 
 function projectActions(project) {
+  const releasePdfKey = `project:releasePdfs:${project.id}`;
+  const releaseParseKey = `project:releaseParse:${project.id}`;
+  const archiveKey = `project:archive:${project.id}`;
+  const deleteKey = `project:delete:${project.id}`;
   return `<div class="toolbar">
-    <button data-project-action="releasePdfs" data-project-id="${escapeAttr(project.id)}">${icon("file")} 释放 PDF</button>
-    <button data-project-action="releaseParse" data-project-id="${escapeAttr(project.id)}">${icon("recycle")} 释放解析</button>
-    <button class="secondary" data-project-action="archive" data-project-id="${escapeAttr(project.id)}">${icon("archive")} 归档</button>
-    <button class="danger" data-project-action="delete" data-project-id="${escapeAttr(project.id)}">${icon("trash")} 删除</button>
+    <button data-project-action="releasePdfs" data-project-id="${escapeAttr(project.id)}" ${busyAttr(releasePdfKey)}>${busyIcon("file", releasePdfKey)} ${isBusy(releasePdfKey) ? "\u91ca\u653e\u4e2d" : "\u91ca\u653e PDF"}</button>
+    <button data-project-action="releaseParse" data-project-id="${escapeAttr(project.id)}" ${busyAttr(releaseParseKey)}>${busyIcon("recycle", releaseParseKey)} ${isBusy(releaseParseKey) ? "\u91ca\u653e\u4e2d" : "\u91ca\u653e\u89e3\u6790"}</button>
+    <button class="secondary" data-project-action="archive" data-project-id="${escapeAttr(project.id)}" ${busyAttr(archiveKey)}>${busyIcon("archive", archiveKey)} ${isBusy(archiveKey) ? "\u5f52\u6863\u4e2d" : "\u5f52\u6863"}</button>
+    <button class="danger" data-project-action="delete" data-project-id="${escapeAttr(project.id)}" ${busyAttr(deleteKey)}>${busyIcon("trash", deleteKey)} ${isBusy(deleteKey) ? "\u5220\u9664\u4e2d" : "\u5220\u9664"}</button>
   </div>`;
 }
 
 function taskLauncher(projectId) {
-  return `<div class="task-launcher pipeline">${Object.entries(jobLabels).map(([type, label], index) =>
-    `<button class="pipeline-step" data-job-type="${type}" data-project-id="${escapeAttr(projectId)}">
+  return `<div class="task-launcher pipeline">${Object.entries(jobLabels).map(([type, label], index) => {
+    const key = `job:${projectId}:${type}`;
+    const busy = isBusy(key);
+    return `<button class="pipeline-step ${busy ? "is-busy" : ""}" data-job-type="${type}" data-project-id="${escapeAttr(projectId)}" ${busyAttr(key)}>
       <span class="step-number">${index + 1}</span>
-      <span><strong>${label}</strong><small>${jobNotes[type]}</small></span>
-      ${icon("play")}
-    </button>`
-  ).join("")}</div>`;
+      <span><strong>${busy ? "\u542f\u52a8\u4e2d..." : label}</strong><small>${jobNotes[type]}</small></span>
+      ${busyIcon("play", key)}
+    </button>`;
+  }).join("")}</div>`;
 }
 
 function jobsMarkup(jobs) {
-  return `<div class="jobs">${jobs.length ? jobs.map((job) => {
+  return `<div class="jobs">${jobs.length ? jobs.map((rawJob) => {
+    const job = normalizeJob(rawJob);
     const total = job.total_count || 0;
     const processed = job.processed_count || 0;
     const percent = total ? Math.round((processed / total) * 100) : 0;
-    return `<div class="job-row">
+    return `<div class="job-row status-${escapeAttr(job.status)}">
       <div>
-        <strong>${escapeHtml(jobLabels[job.type] || job.type)}</strong>
-        <small>${escapeHtml(job.status)} · ${processed}/${total || "-"} · 批量 ${job.batch_limit || 15}</small>
-        <div class="job-progress"><span style="width:${percent}%"></span></div>
+        <div class="job-title-line"><strong>${escapeHtml(jobLabels[job.type] || job.type)}</strong>${statusPill(job.status)}</div>
+        <small>${processed}/${total || "-"} · \u6279\u91cf ${job.batch_limit || 15}</small>
+        <div class="job-progress ${isActiveJob(job.status) ? "active" : ""}"><span style="width:${percent || (isActiveJob(job.status) ? 18 : 0)}%"></span></div>
       </div>
       <div class="row-actions">
-        <button class="secondary icon-only" title="暂停" data-job-action="pause" data-job-id="${escapeAttr(job.id)}">${icon("pause")}</button>
-        <button class="secondary icon-only" title="恢复" data-job-action="resume" data-job-id="${escapeAttr(job.id)}">${icon("play")}</button>
+        <button class="secondary icon-only" title="\u6682\u505c" data-job-action="pause" data-job-id="${escapeAttr(job.id)}" ${busyAttr(`job-action:pause:${job.id}`)}>${busyIcon("pause", `job-action:pause:${job.id}`)}</button>
+        <button class="secondary icon-only" title="\u6062\u590d" data-job-action="resume" data-job-id="${escapeAttr(job.id)}" ${busyAttr(`job-action:resume:${job.id}`)}>${busyIcon("play", `job-action:resume:${job.id}`)}</button>
       </div>
     </div>`;
-  }).join("") : empty("没有运行中的任务。")}</div>`;
+  }).join("") : empty("\u6ca1\u6709\u8fd0\u884c\u4e2d\u7684\u4efb\u52a1\u3002")}</div>`;
 }
 
 function literatureTable(items) {
@@ -404,6 +427,45 @@ function icon(name, className = "") {
     users: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"
   };
   return `<svg class="${className}" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${paths[name] || paths.shield}"/></svg>`;
+}
+
+function isBusy(key) {
+  return Boolean(state.busy[key]);
+}
+
+function busyAttr(key) {
+  return isBusy(key) ? 'disabled aria-busy="true"' : "";
+}
+
+function busyIcon(name, key) {
+  return isBusy(key) ? icon("loader", "spin") : icon(name);
+}
+
+function normalizeJob(job) {
+  return {
+    ...job,
+    project_id: job.project_id || job.projectId || state.selectedId,
+    batch_limit: job.batch_limit || job.batchLimit || 15,
+    processed_count: job.processed_count || 0,
+    total_count: job.total_count || 0,
+    updated_at: job.updated_at || new Date().toISOString()
+  };
+}
+
+function isActiveJob(status) {
+  return ["queued", "running", "paused_quota"].includes(status);
+}
+
+function statusPill(status) {
+  const labels = {
+    queued: "排队中",
+    running: "运行中",
+    paused: "已暂停",
+    paused_quota: "额度暂停",
+    completed: "已完成",
+    failed: "失败"
+  };
+  return `<span class="status-pill ${escapeAttr(status)}">${escapeHtml(labels[status] || status || "未知")}</span>`;
 }
 
 function purposeName(key) {
