@@ -302,10 +302,6 @@ textarea { min-height: 86px; resize: vertical; }
   grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
-.workflow-card-body {
-  display: grid;
-  gap: 10px;
-}
 .workflow-card header strong,
 .workflow-card header small,
 .step-result-card header strong,
@@ -430,6 +426,53 @@ td strong { display: block; max-width: 440px; }
 .dialog h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 20px; }
 .dialog p { margin: 0; color: var(--muted); line-height: 1.5; }
 .dialog label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; font-weight: 850; }
+.step-detail-page {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  background: var(--bg);
+  color: var(--ink);
+}
+.step-detail-topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid var(--line);
+  padding: 10px 12px;
+  background: rgba(255, 254, 249, 0.98);
+  box-shadow: 0 8px 24px rgba(26, 37, 33, 0.08);
+}
+.step-detail-topbar > div {
+  min-width: 0;
+}
+.step-detail-topbar strong,
+.step-detail-topbar span {
+  display: block;
+}
+.step-detail-topbar strong {
+  font-size: 16px;
+}
+.step-detail-topbar span {
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.step-detail-content {
+  width: min(920px, 100%);
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  overflow: auto;
+  margin: 0 auto;
+  padding: 14px 14px 88px;
+}
 .form-error { min-height: 18px; color: var(--danger); font-weight: 850; }
 .spin { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }

@@ -1,4 +1,4 @@
-const APP_VERSION = "2026.07.14.5";
+const APP_VERSION = "2026.07.14.6";
 
 const state = {
   usage: null,
@@ -15,7 +15,7 @@ const state = {
   executionMode: localStorage.getItem("lit_execution_mode") || "local",
   localJobs: loadLocalJobs(),
   stepArtifacts: loadStepArtifacts(),
-  stepViews: loadStepViews(),
+  activeStepDetail: null,
   localTimers: {},
   loginOpen: false
 };
@@ -107,18 +107,6 @@ function saveStepArtifacts() {
   localStorage.setItem("lit_step_artifacts", JSON.stringify(state.stepArtifacts));
 }
 
-function loadStepViews() {
-  try {
-    return JSON.parse(localStorage.getItem("lit_step_views") || "{}");
-  } catch {
-    return {};
-  }
-}
-
-function saveStepViews() {
-  localStorage.setItem("lit_step_views", JSON.stringify(state.stepViews));
-}
-
 function projectArtifacts(projectId) {
   return state.stepArtifacts[projectId] || {};
 }
@@ -136,13 +124,17 @@ function writeStepArtifact(projectId, type, artifact) {
   saveStepArtifacts();
 }
 
-function stepView(projectId, type) {
-  return state.stepViews[`${projectId}:${type}`] || "input";
+function openStepDetail(projectId, type, view) {
+  state.activeStepDetail = {
+    projectId,
+    type,
+    view: view === "result" ? "result" : "input"
+  };
+  render();
 }
 
-function setStepView(projectId, type, view) {
-  state.stepViews[`${projectId}:${type}`] = view === "result" ? "result" : "input";
-  saveStepViews();
+function closeStepDetail() {
+  state.activeStepDetail = null;
   render();
 }
 
@@ -362,6 +354,7 @@ function render() {
         </section>
       </main>
       ${mobileTabbar()}
+      ${state.activeStepDetail ? stepDetailPage() : ""}
       ${state.loginOpen ? loginDialog() : ""}
     </div>
   `;
@@ -378,7 +371,8 @@ function bindEvents() {
   });
   document.querySelector("[data-action='cleanup']")?.addEventListener("click", () => runAction("\u6e05\u7406\u4e34\u65f6\u6587\u4ef6", Api.cleanupTemp, "cleanup"));
   document.querySelectorAll("[data-mode]").forEach((button) => button.addEventListener("click", () => setExecutionMode(button.dataset.mode)));
-  document.querySelectorAll("[data-step-view]").forEach((button) => button.addEventListener("click", () => setStepView(button.dataset.projectId, button.dataset.stepType, button.dataset.stepView)));
+  document.querySelectorAll("[data-step-open]").forEach((button) => button.addEventListener("click", () => openStepDetail(button.dataset.projectId, button.dataset.stepType, button.dataset.stepOpen)));
+  document.querySelector("[data-step-close]")?.addEventListener("click", closeStepDetail);
   document.querySelectorAll("[data-select-project]").forEach((button) => button.addEventListener("click", () => refresh(button.dataset.selectProject)));
   document.querySelector("[data-create-project]")?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -443,7 +437,7 @@ function bindEvents() {
 }
 
 function updateBanner() {
-  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>流程页改为一体式步骤卡，每一步都可在卡内查看输入、处理状态和结果。</span></div><button data-action="dismiss-update">知道了</button></div>';
+  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>流程页保持 7 张卡总览，输入和结果改为独立详情页查看后关闭。</span></div><button data-action="dismiss-update">知道了</button></div>';
 }
 
 function mobileTabbar() {
@@ -531,8 +525,6 @@ function workflowCard(detail, type, number, artifact) {
   const statusText = status === "completed" ? "已生成" : status === "running" ? "生成中" : "尚未生成";
   const key = `job:${projectId}:${type}`;
   const busy = isBusy(key);
-  const view = stepView(projectId, type);
-  const body = view === "result" ? renderStepOutput(type, number, artifact) : renderStepInput(type, detail);
   return `<article class="workflow-card status-${escapeAttr(status)}">
     <header>
       <span class="step-number">${number}</span>
@@ -547,11 +539,33 @@ function workflowCard(detail, type, number, artifact) {
       <span>${escapeHtml(stepProcessText(type, status, busy))}</span>
     </div>
     <div class="step-switch">
-      <button class="${view === "input" ? "" : "secondary"}" data-step-view="input" data-step-type="${escapeAttr(type)}" data-project-id="${escapeAttr(projectId)}">输入</button>
-      <button class="${view === "result" ? "" : "secondary"}" data-step-view="result" data-step-type="${escapeAttr(type)}" data-project-id="${escapeAttr(projectId)}">结果</button>
+      <button class="secondary" data-step-open="input" data-step-type="${escapeAttr(type)}" data-project-id="${escapeAttr(projectId)}">${icon("file")} 查看输入</button>
+      <button class="secondary" data-step-open="result" data-step-type="${escapeAttr(type)}" data-project-id="${escapeAttr(projectId)}">${icon("drive")} 查看结果</button>
     </div>
-    <div class="workflow-card-body">${body}</div>
   </article>`;
+}
+
+function stepDetailPage() {
+  const active = state.activeStepDetail;
+  const detail = state.detail?.project?.id === active.projectId ? state.detail : null;
+  if (!detail) return "";
+  const artifact = projectArtifacts(active.projectId)[active.type];
+  const number = Object.keys(jobLabels).indexOf(active.type) + 1;
+  const isResult = active.view === "result";
+  const title = isResult ? "执行结果" : "输入信息";
+  const body = isResult ? renderStepOutput(active.type, number, artifact) : renderStepInput(active.type, detail);
+  const status = artifact?.status || "empty";
+  const statusText = status === "completed" ? "已生成" : status === "running" ? "生成中" : "尚未生成";
+  return `<div class="step-detail-page">
+    <header class="step-detail-topbar">
+      <button class="secondary" data-step-close>${icon("back")} 关闭</button>
+      <div>
+        <strong>${escapeHtml(title)}</strong>
+        <span>第 ${number} 步 · ${escapeHtml(jobLabels[active.type])} · ${escapeHtml(statusText)}</span>
+      </div>
+    </header>
+    <main class="step-detail-content">${body}</main>
+  </div>`;
 }
 
 function renderStepOutput(type, number, artifact) {
@@ -858,6 +872,7 @@ function icon(name, className = "") {
     plus: "M12 5v14M5 12h14",
     file: "M14 2H6v20h12V8l-4-6ZM14 2v6h4",
     archive: "M3 7h18M5 7v13h14V7M9 11h6",
+    back: "M19 12H5M12 19l-7-7 7-7",
     play: "M8 5v14l11-7-11-7Z",
     pause: "M8 5v14M16 5v14",
     loader: "M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"
