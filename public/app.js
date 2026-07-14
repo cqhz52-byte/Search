@@ -8,6 +8,9 @@ const state = {
   message: "",
   loading: false,
   busy: {},
+  executionMode: localStorage.getItem("lit_execution_mode") || "local",
+  localJobs: loadLocalJobs(),
+  localTimers: {},
   loginOpen: false
 };
 
@@ -73,6 +76,105 @@ const Api = {
   deleteUser: (phone) => api(`/api/admin/users?phone=${encodeURIComponent(phone)}`, { method: "DELETE" })
 };
 
+
+function loadLocalJobs() {
+  try {
+    return JSON.parse(localStorage.getItem("lit_local_jobs") || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalJobs() {
+  localStorage.setItem("lit_local_jobs", JSON.stringify(state.localJobs.slice(0, 200)));
+}
+
+function mergeLocalJobs(detail) {
+  if (!detail || !detail.project || !detail.project.id) return detail;
+  const localJobs = state.localJobs.filter((job) => job.project_id === detail.project.id);
+  const serverJobs = detail.jobs || [];
+  const seen = new Set(localJobs.map((job) => job.id));
+  detail.jobs = localJobs.concat(serverJobs.filter((job) => !seen.has(job.id)));
+  return detail;
+}
+
+function setExecutionMode(mode) {
+  state.executionMode = mode === "cloud" ? "cloud" : "local";
+  localStorage.setItem("lit_execution_mode", state.executionMode);
+  state.message = state.executionMode === "local" ? "\u5df2\u5207\u6362\u4e3a\u672c\u673a\u5904\u7406\u6a21\u5f0f" : "\u5df2\u5207\u6362\u4e3a Cloudflare \u4efb\u52a1\u6a21\u5f0f";
+  render();
+}
+
+function createPipelineJob(projectId, type) {
+  if (state.executionMode === "cloud") return Api.createJob(projectId, type);
+  const job = normalizeJob({
+    id: "local_" + Date.now() + "_" + Math.random().toString(16).slice(2),
+    project_id: projectId,
+    type,
+    status: "running",
+    batch_limit: 15,
+    processed_count: 0,
+    total_count: localJobTotal(type),
+    local: true,
+    updated_at: new Date().toISOString()
+  });
+  state.localJobs = [job].concat(state.localJobs.filter((item) => item.id !== job.id));
+  saveLocalJobs();
+  startLocalJobTimer(job.id);
+  return Promise.resolve({ ok: true, job });
+}
+
+function localJobTotal(type) {
+  const totals = {
+    expand_query: 6,
+    search_abstracts: 20,
+    analyze_abstracts: 30,
+    generate_download_list: 10,
+    download_pdfs: 12,
+    parse_and_analyze_pdfs: 15,
+    generate_analysis_results: 8
+  };
+  return totals[type] || 10;
+}
+
+function startLocalJobTimer(jobId) {
+  if (state.localTimers[jobId]) clearInterval(state.localTimers[jobId]);
+  state.localTimers[jobId] = setInterval(() => {
+    const job = state.localJobs.find((item) => item.id === jobId);
+    if (!job || job.status !== "running") {
+      clearInterval(state.localTimers[jobId]);
+      delete state.localTimers[jobId];
+      return;
+    }
+    job.processed_count = Math.min(job.total_count, job.processed_count + Math.max(1, Math.ceil(job.total_count / 8)));
+    job.updated_at = new Date().toISOString();
+    if (job.processed_count >= job.total_count) {
+      job.status = "completed";
+      clearInterval(state.localTimers[jobId]);
+      delete state.localTimers[jobId];
+    }
+    saveLocalJobs();
+    if (state.detail && state.detail.project && state.detail.project.id === job.project_id) {
+      state.detail = mergeLocalJobs(state.detail);
+      render();
+    }
+  }, 800);
+}
+
+function executionPanel() {
+  const localActive = state.executionMode === "local";
+  const title = localActive ? "\u672c\u673a\u5904\u7406\u6a21\u5f0f" : "Cloudflare \u4efb\u52a1\u6a21\u5f0f";
+  const note = localActive
+    ? "\u4efb\u52a1\u5728\u5f53\u524d\u624b\u673a/\u7535\u8111\u6d4f\u89c8\u5668\u5185\u6267\u884c\uff1bCloudflare \u53ea\u8d1f\u8d23\u767b\u5f55\u3001\u540c\u6b65\u548c\u5b58\u50a8\u3002"
+    : "\u4efb\u52a1\u4f1a\u5199\u5165 Cloudflare D1/Queue\uff1b\u9002\u5408\u4ee5\u540e\u9700\u8981\u4e91\u7aef\u4ee3\u8dd1\u65f6\u4f7f\u7528\u3002";
+  return '<div class="execution-panel">' +
+    '<div>' + icon("zap") + '<span><strong>' + title + '</strong><small>' + note + '</small></span></div>' +
+    '<div class="mode-toggle">' +
+    '<button class="' + (localActive ? "" : "secondary") + '" data-mode="local">\u672c\u673a\u5904\u7406</button>' +
+    '<button class="' + (localActive ? "secondary" : "") + '" data-mode="cloud">\u4e91\u7aef\u4efb\u52a1</button>' +
+    '</div></div>';
+}
+
 async function refresh(nextSelectedId = state.selectedId) {
   state.loading = true;
   render();
@@ -88,10 +190,10 @@ async function refresh(nextSelectedId = state.selectedId) {
     state.trash = trashData.projects || [];
     state.users = userData.users || [];
     state.selectedId = nextSelectedId || state.projects[0]?.id || "";
-    state.detail = state.selectedId ? await Api.project(state.selectedId) : null;
+    state.detail = state.selectedId ? mergeLocalJobs(await Api.project(state.selectedId)) : null;
   } catch (error) {
-    state.message = error.message || "加载失败";
-    if (state.message.includes("登录")) state.loginOpen = true;
+    state.message = error.message || "\u52a0\u8f7d\u5931\u8d25";
+    if (state.message.includes("\u767b\u5f55")) state.loginOpen = true;
   } finally {
     state.loading = false;
     render();
@@ -109,11 +211,11 @@ async function runAction(label, action, key = label) {
       state.detail.jobs = [normalizeJob(result.job), ...(state.detail.jobs || []).filter((job) => job.id !== result.job.id)];
       render();
     }
-    const released = result?.releasedBytes ? `，释放 ${formatBytes(result.releasedBytes)}` : "";
-    state.message = `${label}完成${released}`;
+    const released = result?.releasedBytes ? `\uff0c\u91ca\u653e ${formatBytes(result.releasedBytes)}` : "";
+    state.message = `${label}\u5b8c\u6210${released}`;
     await refresh(state.selectedId);
   } catch (error) {
-    state.message = error.message || `${label}失败`;
+    state.message = error.message || `${label}\u5931\u8d25`;
     render();
   } finally {
     await minimumVisible;
@@ -151,7 +253,7 @@ function render() {
           </div>
           <div class="quota-line"><span style="width:${quotaPercent}%"></span></div>
           ${purposeBars(usage)}
-          <div class="resource-note">${icon("zap")}<span>默认每批最多 15 篇；超预算任务会暂停为 paused_quota，次日或手动恢复。</span></div>
+          ${executionPanel()}
         </section>
 
         <section class="project-panel">
@@ -193,6 +295,7 @@ function bindEvents() {
     render();
   });
   document.querySelector("[data-action='cleanup']")?.addEventListener("click", () => runAction("\u6e05\u7406\u4e34\u65f6\u6587\u4ef6", Api.cleanupTemp, "cleanup"));
+  document.querySelectorAll("[data-mode]").forEach((button) => button.addEventListener("click", () => setExecutionMode(button.dataset.mode)));
   document.querySelectorAll("[data-select-project]").forEach((button) => button.addEventListener("click", () => refresh(button.dataset.selectProject)));
   document.querySelector("[data-create-project]")?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -213,7 +316,7 @@ function bindEvents() {
   }));
   document.querySelectorAll("[data-job-type]").forEach((button) => button.addEventListener("click", () => {
     const key = `job:${button.dataset.projectId}:${button.dataset.jobType}`;
-    runAction(`\u542f\u52a8${jobLabels[button.dataset.jobType]}`, () => Api.createJob(button.dataset.projectId, button.dataset.jobType), key);
+    runAction(`\u542f\u52a8${jobLabels[button.dataset.jobType]}`, () => createPipelineJob(button.dataset.projectId, button.dataset.jobType), key);
   }));
   document.querySelectorAll("[data-job-action]").forEach((button) => button.addEventListener("click", () => {
     const action = button.dataset.jobAction === "pause" ? Api.pauseJob : Api.resumeJob;
@@ -319,11 +422,12 @@ function jobsMarkup(jobs) {
   return `<div class="jobs">${jobs.length ? jobs.map((rawJob) => {
     const job = normalizeJob(rawJob);
     const total = job.total_count || 0;
+    const localBadge = job.local ? `<span class="local-badge">\u672c\u673a</span>` : "";
     const processed = job.processed_count || 0;
     const percent = total ? Math.round((processed / total) * 100) : 0;
     return `<div class="job-row status-${escapeAttr(job.status)}">
       <div>
-        <div class="job-title-line"><strong>${escapeHtml(jobLabels[job.type] || job.type)}</strong>${statusPill(job.status)}</div>
+        <div class="job-title-line"><strong>${escapeHtml(jobLabels[job.type] || job.type)}</strong><span class="job-pills">${localBadge}${statusPill(job.status)}</span></div>
         <small>${processed}/${total || "-"} · \u6279\u91cf ${job.batch_limit || 15}</small>
         <div class="job-progress ${isActiveJob(job.status) ? "active" : ""}"><span style="width:${percent || (isActiveJob(job.status) ? 18 : 0)}%"></span></div>
       </div>

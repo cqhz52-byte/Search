@@ -108,6 +108,36 @@ button.danger { border-color: #ffd0cc; background: var(--danger-bg); color: var(
 .purpose-row div span { display: block; height: 100%; background: #b58a2a; }
 .purpose-row small { color: var(--muted); text-align: right; }
 .resource-note { display: flex; align-items: flex-start; gap: 8px; margin-top: 13px; padding: 10px; border-radius: 8px; background: var(--surface-2); color: #31554b; font-size: 13px; line-height: 1.45; }
+.execution-panel {
+  display: grid;
+  gap: 10px;
+  margin-top: 13px;
+  padding: 10px;
+  border: 1px solid #c7efe5;
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: #31554b;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.execution-panel > div:first-child {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.execution-panel strong,
+.execution-panel small {
+  display: block;
+}
+.execution-panel small {
+  margin-top: 3px;
+  color: var(--muted);
+}
+.mode-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
 .project-list, .trash-list, .user-list, .jobs { display: grid; gap: 8px; }
 .project-row { width: 100%; min-height: 66px; justify-content: flex-start; text-align: left; border-color: var(--line); background: white; color: var(--ink); }
 .project-row.active { border-color: var(--brand); background: #ecf8f5; }
@@ -159,6 +189,19 @@ textarea { min-height: 86px; resize: vertical; }
   font-weight: 950;
 }
 .job-title-line { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.job-pills { display: inline-flex; align-items: center; gap: 6px; }
+.local-badge {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0 8px;
+  background: #e8f0ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
 .status-pill {
   display: inline-flex;
   min-height: 24px;
