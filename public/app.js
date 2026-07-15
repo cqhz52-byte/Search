@@ -1,4 +1,4 @@
-const APP_VERSION = "2026.07.15.2";
+const APP_VERSION = "2026.07.15.3";
 
 const state = {
   usage: null,
@@ -289,7 +289,7 @@ async function refresh(nextSelectedId = state.selectedId) {
 async function runAction(label, action, key = label, options = {}) {
   state.busy[key] = label;
   const minimumVisible = new Promise((resolve) => setTimeout(resolve, 700));
-  state.message = `${label}...`;
+  state.message = options.progressMessage || `${label}...`;
   render();
   try {
     const result = await action();
@@ -298,7 +298,10 @@ async function runAction(label, action, key = label, options = {}) {
       render();
     }
     const released = result?.releasedBytes ? `\uff0c\u91ca\u653e ${formatBytes(result.releasedBytes)}` : "";
-    state.message = result?.job?.local && result.job.status === "running" ? `${label}\u5df2\u5f00\u59cb\uff0c\u5b8c\u6210\u540e\u4f1a\u751f\u6210\u6b65\u9aa4\u7ed3\u679c` : `${label}\u5b8c\u6210${released}`;
+    const stillRunning = result?.job && ["queued", "running", "paused_quota"].includes(result.job.status);
+    state.message = stillRunning
+      ? `${label}\u5df2\u5f00\u59cb\uff0c\u5b8c\u6210\u540e\u4f1a\u751f\u6210\u6b65\u9aa4\u7ed3\u679c`
+      : (options.successMessage || `${label}\u5b8c\u6210${released}`);
     await refresh(state.selectedId);
     if (options.openStepResult && result?.job && result.job.status !== "running") {
       openStepDetail(options.projectId || result.job.project_id || result.job.projectId, options.type || result.job.type, "result");
@@ -356,7 +359,7 @@ function render() {
 
         <section class="detail-panel desktop-panel">
           ${sectionTitle("drive", selectedProject?.title || "项目详情", selectedProject ? projectActions(selectedProject) : "")}
-          ${state.detail ? `${workflowCards(state.detail)}${jobsMarkup(state.detail.jobs || [])}${literatureTable(state.detail.literature || [])}` : empty("选择项目后查看题录、任务和证据提取状态。")}
+          ${state.detail ? `${workflowCards(state.detail)}${jobsMarkup(state.detail.jobs || [])}${documentsMarkup(state.detail.documents || [])}${literatureTable(state.detail.literature || [])}` : empty("选择项目后查看题录、任务和证据提取状态。")}
         </section>
 
         <section class="workflow-panel mobile-tab-panel ${state.mobileTab === "workflow" ? "is-active" : ""}">
@@ -366,7 +369,7 @@ function render() {
 
         <section class="task-status-panel mobile-tab-panel ${state.mobileTab === "tasks" ? "is-active" : ""}">
           ${sectionTitle("drive", "任务状态", selectedProject ? projectActions(selectedProject) : "")}
-          ${state.detail ? `${jobsMarkup(state.detail.jobs || [])}${literatureTable(state.detail.literature || [])}` : empty("请先在项目页选择一个项目。")}
+          ${state.detail ? `${jobsMarkup(state.detail.jobs || [])}${documentsMarkup(state.detail.documents || [])}${literatureTable(state.detail.literature || [])}` : empty("请先在项目页选择一个项目。")}
         </section>
         <section class="trash-panel mobile-tab-panel ${state.mobileTab === "manage" ? "is-active" : ""}">
           ${sectionTitle("trash", "回收站", "")}
@@ -439,10 +442,13 @@ function bindEvents() {
   }));
   document.querySelectorAll("[data-job-type]").forEach((button) => button.addEventListener("click", () => {
     const key = `job:${button.dataset.projectId}:${button.dataset.jobType}`;
+    const isFullText = button.dataset.jobType === "download_pdfs";
     runAction(`\u542f\u52a8${jobLabels[button.dataset.jobType]}`, () => createPipelineJob(button.dataset.projectId, button.dataset.jobType), key, {
       openStepResult: true,
       projectId: button.dataset.projectId,
-      type: button.dataset.jobType
+      type: button.dataset.jobType,
+      progressMessage: isFullText ? "服务器正在获取开放全文，可切换到其他页面；完成后会在结果页和文件列表中显示。" : "",
+      successMessage: isFullText ? "服务器全文获取完成；已保存文件会出现在项目文件列表，可随时打开参考。" : ""
     });
   }));
   document.querySelectorAll("[data-screening-lit]").forEach((button) => button.addEventListener("click", () => {
@@ -507,7 +513,7 @@ function bindEvents() {
 }
 
 function updateBanner() {
-  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>全文获取默认只抓开放全文 XML，并跳过已完成/失败题录，减少 Cloudflare 免费额度消耗。</span></div><button data-action="dismiss-update">知道了</button></div>';
+  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>服务器获取全文时会提示可离开页面；项目详情新增已保存 PDF/XML 文件列表，可随时打开参考。</span></div><button data-action="dismiss-update">知道了</button></div>';
 }
 
 function mobileTabbar() {
@@ -962,6 +968,37 @@ function jobsMarkup(jobs) {
   }).join("") : empty("\u6ca1\u6709\u8fd0\u884c\u4e2d\u7684\u4efb\u52a1\u3002")}</div>`;
 }
 
+function documentsMarkup(documents) {
+  const activeDocs = (documents || []).filter((item) => item.status !== "released");
+  if (!activeDocs.length) return `<section class="document-panel">${sectionTitle("file", "已保存文件", "")}${empty("还没有保存的 PDF/XML 文件。执行“获取全文”后会显示在这里。")}</section>`;
+  return `<section class="document-panel">
+    ${sectionTitle("file", "已保存文件", `<span class="doc-count">${activeDocs.length} 个文件</span>`)}
+    <div class="document-list">
+      ${activeDocs.map((doc) => {
+        const href = `/api/documents/${encodeURIComponent(doc.id)}`;
+        return `<article class="document-row">
+          <div>
+            <strong>${escapeHtml(documentKindLabel(doc.kind, doc.purpose))}</strong>
+            <small>${escapeHtml(doc.r2_key || doc.id)} · ${formatBytes(doc.size_bytes || 0)} · ${formatDateTime(doc.created_at)}</small>
+          </div>
+          <div class="row-actions">
+            <a class="button-link" href="${href}" target="_blank" rel="noopener">打开</a>
+            <a class="button-link secondary-link" href="${href}" download>下载</a>
+          </div>
+        </article>`;
+      }).join("")}
+    </div>
+  </section>`;
+}
+
+function documentKindLabel(kind = "", purpose = "") {
+  if (kind === "fulltext_xml") return "开放全文 XML";
+  if (kind === "pdf") return "PDF 原文";
+  if (purpose === "parse") return "解析文件";
+  if (purpose === "export") return "导出文件";
+  return kind || purpose || "文件";
+}
+
 function literatureTable(items) {
   if (!items.length) return empty("还没有题录。");
   return `<div class="table-wrap"><table>
@@ -1195,6 +1232,10 @@ function demoResponse(path, options = {}) {
     return {
       project: { id: "prj_demo", title: "糖尿病远程干预证据综述", status: "active", literature_count: 286, bytes: 17825792 },
       literature: demoLiterature(),
+      documents: [
+        { id: "doc_demo_xml", r2_key: "parse/prj_demo/lit1.fulltext.xml", kind: "fulltext_xml", purpose: "parse", size_bytes: 196406, content_type: "application/xml", status: "active", created_at: new Date().toISOString() },
+        { id: "doc_demo_pdf", r2_key: "pdf/prj_demo/lit1.pdf", kind: "pdf", purpose: "pdf", size_bytes: 1239040, content_type: "application/pdf", status: "active", created_at: new Date().toISOString() }
+      ],
       jobs: [{ id: "job_demo", project_id: "prj_demo", type: "parse_and_analyze_pdfs", status: "paused_quota", batch_limit: 15, processed_count: 30, total_count: 120, updated_at: new Date().toISOString() }]
     };
   }

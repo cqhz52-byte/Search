@@ -12,7 +12,11 @@ export async function onRequestGet({ request, env, params }) {
     .bind(params.id)
     .all();
   const jobs = await db.prepare("SELECT * FROM jobs WHERE project_id = ? ORDER BY updated_at DESC LIMIT 20").bind(params.id).all();
-  return json({ project, literature: literature.results || [], jobs: jobs.results || [] });
+  const documents = await db
+    .prepare("SELECT id, literature_id, r2_key, kind, purpose, size_bytes, content_type, status, created_at, last_accessed_at, expires_at FROM documents WHERE project_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 200")
+    .bind(params.id)
+    .all();
+  return json({ project, literature: literature.results || [], jobs: jobs.results || [], documents: documents.results || [] });
 }
 
 export async function onRequestPut({ request, env, params }) {
