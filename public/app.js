@@ -1,4 +1,4 @@
-const APP_VERSION = "2026.07.15.4";
+const APP_VERSION = "2026.07.15.5";
 
 const state = {
   usage: null,
@@ -512,7 +512,7 @@ function bindEvents() {
 }
 
 function updateBanner() {
-  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>运行状态固定显示；全文获取改为直接查询可下载候选，并展示 PMCID/已保存/失败跳过统计。</span></div><button data-action="dismiss-update">知道了</button></div>';
+  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>全文获取不再限制 15 篇；结果列表改为紧凑文件名，详情中可查看正文预览和全文文件。</span></div><button data-action="dismiss-update">知道了</button></div>';
 }
 
 function runtimeStatus(activeCount) {
@@ -720,7 +720,7 @@ function renderArtifactLike(artifact) {
   const sections = (artifact.sections || []).map((section) => {
     const code = section.code ? `<pre>${escapeHtml(section.code)}</pre>` : "";
     const items = section.items?.length ? `<ul>${section.items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : "";
-    const rows = section.rows?.length ? miniTable(section.rows) : "";
+    const rows = section.rows?.length ? miniTable(section.rows, Boolean(section.compact)) : "";
     const body = `${section.body ? `<p>${escapeHtml(section.body)}</p>` : ""}${items}${rows}${code}`;
     const rowCount = section.rows?.length || 0;
     const shouldCollapse = rowCount > 8 || /摘要|题录|清单|队列|候选|素材/.test(section.title || "");
@@ -738,12 +738,36 @@ function stepProcessText(type, status, busy) {
   return `待处理：${jobNotes[type]}`;
 }
 
-function miniTable(rows) {
+function miniTable(rows, compact = false) {
+  if (compact) return compactFileList(rows);
   const keys = Object.keys(rows[0] || {});
   if (!keys.length) return "";
   return `<div class="mini-table"><table><thead><tr>${keys.map((key) => `<th>${escapeHtml(key)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) =>
     `<tr>${keys.map((key) => miniTableCell(row, key)).join("")}</tr>`
   ).join("")}</tbody></table><div class="mini-card-list">${rows.map((row) => miniCard(row, keys)).join("")}</div></div>`;
+}
+
+function compactFileList(rows) {
+  return `<div class="compact-file-list">${rows.map((row) => {
+    const name = row["文件名"] || row["题名"] || row["英文题名"] || row["PMCID"] || "全文文件";
+    const status = row["状态"] || "-";
+    const kind = row["大小/格式"] || "";
+    const detailFields = ["英文题名", "PMCID", "来源URL", "正文预览", "说明"]
+      .filter((key) => row[key])
+      .map((key) => ({ key, value: row[key] }));
+    const fileHref = row["全文文件"] || "";
+    return `<article class="compact-file-row">
+      <div class="compact-file-main">
+        <strong>${escapeHtml(name)}</strong>
+        <small>${escapeHtml(status)}${kind ? ` · ${escapeHtml(kind)}` : ""}</small>
+      </div>
+      <details class="mini-card-detail compact-file-detail">
+        <summary>查看详情</summary>
+        ${detailFields.map((field) => `<div class="detail-field"><span>${escapeHtml(field.key)}</span><p>${escapeHtml(field.value || "-")}</p></div>`).join("")}
+        ${fileHref ? `<div class="detail-field"><span>全文文件</span><p><a href="${escapeAttr(fileHref)}" target="_blank" rel="noopener">打开已保存 XML/PDF</a></p></div>` : ""}
+      </details>
+    </article>`;
+  }).join("")}</div>`;
 }
 
 function miniTableCell(row, key) {

@@ -219,14 +219,36 @@ async function runGenerateDownloadList(context) {
 }
 
 async function runDownloadPdfs(context) {
-  const batchLimit = Math.max(1, Math.min(20, Number(context.env.DEFAULT_BATCH_LIMIT || 15)));
   const stats = await getDownloadCandidateStats(context.db, context.project.id);
-  const rows = await getDownloadCandidates(context.db, context.project.id, batchLimit);
+  const rows = stats.eligible ? await getDownloadCandidates(context.db, context.project.id, stats.eligible) : [];
   const results = [];
   for (const item of rows) {
     const result = await tryStoreOpenFullText(context, item);
-    results.push({ "题名": item.title, "PMCID": item.pmcid, "获取": result.status, "格式": result.kind || "-", "来源URL": result.url || "-", "说明": result.note || "" });
+    results.push({
+      id: item.id,
+      title: item.title,
+      pmcid: item.pmcid,
+      status: result.status,
+      kind: result.kind || "-",
+      url: result.url || "",
+      note: result.note || "",
+      textPreview: result.textPreview || "",
+      documentId: result.documentId || ""
+    });
   }
+  const translatedNames = await translateDownloadFileNames(context.db, results);
+  const resultRows = results.map((item) => ({
+    "文件名": translatedNames[item.id] || compactFileName(item.title, item.pmcid),
+    "状态": item.status,
+    "大小/格式": item.kind,
+    "详情": "点击查看",
+    "英文题名": item.title,
+    "PMCID": item.pmcid,
+    "来源URL": item.url,
+    "正文预览": item.textPreview,
+    "说明": item.note,
+    "全文文件": item.documentId ? `/api/documents/${item.documentId}` : ""
+  }));
   const summary = rows.length
     ? `本次尝试获取开放全文 ${results.length}/${stats.eligible} 条；纳入/待定 ${stats.total} 条，有 PMCID ${stats.withPmcid} 条，已保存 ${stats.ready} 条，失败跳过 ${stats.failed} 条，无 PMCID ${stats.noPmcid} 条。`
     : `没有符合本次自动获取条件的全文；纳入/待定 ${stats.total} 条，有 PMCID ${stats.withPmcid} 条，已保存 ${stats.ready} 条，失败跳过 ${stats.failed} 条，无 PMCID ${stats.noPmcid} 条。`;
@@ -234,10 +256,10 @@ async function runDownloadPdfs(context) {
     type: context.type,
     status: "completed",
     summary: `${summary} 优先保存可解析全文 XML，PDF 仅作为可选附件。`,
-    data: { attempted: results.length, batchLimit, ...stats },
+    data: { attempted: results.length, batchLimit: stats.eligible, ...stats },
     sections: [
-      { title: "全文候选统计", rows: [{ "纳入/待定": stats.total, "有PMCID": stats.withPmcid, "可尝试": stats.eligible, "本次上限": batchLimit, "已保存": stats.ready, "失败跳过": stats.failed, "无PMCID": stats.noPmcid }] },
-      { title: "全文获取结果", rows: results }
+      { title: "全文候选统计", rows: [{ "纳入/待定": stats.total, "有PMCID": stats.withPmcid, "可尝试": stats.eligible, "本次尝试": results.length, "已保存": stats.ready, "失败跳过": stats.failed, "无PMCID": stats.noPmcid }] },
+      { title: "全文获取结果", compact: true, rows: resultRows }
     ]
   };
 }
@@ -316,11 +338,12 @@ async function runGenerateAnalysisResults(context) {
 
 async function saveCompletedJob(context, artifact, totalCount) {
   const id = randomId("job");
+  const batchLimit = Number(artifact?.data?.batchLimit || 15);
   await context.db
-    .prepare("INSERT INTO jobs (id, project_id, type, status, batch_limit, processed_count, total_count, cost_units, payload_json, created_at, updated_at, completed_at) VALUES (?, ?, ?, 'completed', 15, ?, ?, ?, ?, ?, ?, ?)")
-    .bind(id, context.project.id, context.type, totalCount, totalCount, aiStep(context.type) ? 5 : 2, JSON.stringify({ artifact }), context.now, context.now, context.now)
+    .prepare("INSERT INTO jobs (id, project_id, type, status, batch_limit, processed_count, total_count, cost_units, payload_json, created_at, updated_at, completed_at) VALUES (?, ?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?)")
+    .bind(id, context.project.id, context.type, batchLimit, totalCount, totalCount, aiStep(context.type) ? 5 : 2, JSON.stringify({ artifact }), context.now, context.now, context.now)
     .run();
-  return { id, project_id: context.project.id, type: context.type, status: "completed", batch_limit: 15, processed_count: totalCount, total_count: totalCount, payload_json: JSON.stringify({ artifact }), updated_at: context.now };
+  return { id, project_id: context.project.id, type: context.type, status: "completed", batch_limit: batchLimit, processed_count: totalCount, total_count: totalCount, payload_json: JSON.stringify({ artifact }), updated_at: context.now };
 }
 
 async function getDeepseekKey(db) {
@@ -642,6 +665,49 @@ async function getDownloadCandidateStats(db, projectId) {
   };
 }
 
+async function translateDownloadFileNames(db, results) {
+  const candidates = results
+    .filter((item) => item.title && item.status && !/^未/.test(item.status))
+    .slice(0, 120)
+    .map((item) => ({ id: item.id, title: item.title, pmcid: item.pmcid }));
+  if (!candidates.length) return {};
+  let key = "";
+  try {
+    const row = await db.prepare("SELECT value FROM app_settings WHERE key = ?").bind(DEEPSEEK_KEY).first();
+    key = safeText(row?.value);
+  } catch {}
+  if (!key) return {};
+  try {
+    const data = await deepseekJson(key, [
+      "请把以下英文医学论文题名翻译成适合作为文件名的简短中文名。只输出 JSON。",
+      "要求：每个中文名 8-28 个汉字左右；保留关键疾病、干预和研究对象；不要加 PDF/XML 后缀；不要使用 / \\ : * ? \" < > | 等文件名非法字符。",
+      "JSON schema: {\"files\":[{\"id\":\"\",\"name\":\"\"}]}",
+      JSON.stringify(candidates).slice(0, 20000)
+    ].join("\n"));
+    const names = {};
+    for (const item of Array.isArray(data.files) ? data.files : []) {
+      const id = safeText(item.id);
+      const name = cleanFileName(item.name);
+      if (id && name) names[id] = name;
+    }
+    return names;
+  } catch {
+    return {};
+  }
+}
+
+function compactFileName(title, pmcid) {
+  const base = cleanFileName(title).slice(0, 90);
+  return base || safeText(pmcid) || "全文文件";
+}
+
+function cleanFileName(value) {
+  return safeText(value)
+    .replace(/[\\/:*?"<>|]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 async function extractFullTextForAnalysis(item) {
   const base = {
     id: item.id,
@@ -741,12 +807,21 @@ async function tryStoreFullTextXml(context, item) {
     const max = Number(context.env.MAX_PDF_BYTES || 15728640);
     if (bytes.byteLength > max) return { ok: false, status: "全文 XML 超过大小限制", url, note: `${Math.round(bytes.byteLength / 1024 / 1024)} MB` };
     const key = `parse/${context.project.id}/${item.id}.fulltext.xml`;
+    const docId = randomId("doc");
     await context.env.LIT_R2.put(key, bytes, { httpMetadata: { contentType: "application/xml; charset=utf-8" } });
     await context.db.prepare("INSERT OR REPLACE INTO documents (id, project_id, literature_id, r2_key, kind, purpose, size_bytes, content_type, status, created_at, last_accessed_at, expires_at) VALUES (?, ?, ?, ?, 'fulltext_xml', 'parse', ?, 'application/xml', 'active', ?, ?, ?)")
-      .bind(randomId("doc"), context.project.id, item.id, key, bytes.byteLength, context.now, context.now, daysFromNow(Number(context.env.PARSE_RETENTION_DAYS || 30)))
+      .bind(docId, context.project.id, item.id, key, bytes.byteLength, context.now, context.now, daysFromNow(Number(context.env.PARSE_RETENTION_DAYS || 30)))
       .run();
     await context.db.prepare("UPDATE literature SET pdf_status = 'fulltext_ready', parse_status = 'text_ready', updated_at = ? WHERE id = ?").bind(context.now, item.id).run();
-    return { ok: true, status: `已保存全文 XML ${Math.round(bytes.byteLength / 1024)} KB`, kind: "fulltext_xml", url, note: `抽取正文约 ${text.length} 字符，可直接进入全文 AI 分析。` };
+    return {
+      ok: true,
+      status: `已保存全文 XML ${Math.round(bytes.byteLength / 1024)} KB`,
+      kind: "fulltext_xml",
+      url,
+      documentId: docId,
+      textPreview: text.slice(0, 2400),
+      note: `抽取正文约 ${text.length} 字符，可直接进入全文 AI 分析。`
+    };
   } catch (error) {
     return { ok: false, status: "全文 XML 获取失败", url, note: error.message };
   }
@@ -773,12 +848,13 @@ async function tryDownloadOpenPdf(context, item) {
         continue;
       }
       const key = `pdf/${context.project.id}/${item.id}.pdf`;
+      const docId = randomId("doc");
       await context.env.LIT_R2.put(key, buffer, { httpMetadata: { contentType: "application/pdf" } });
       await context.db.prepare("INSERT OR REPLACE INTO documents (id, project_id, literature_id, r2_key, kind, purpose, size_bytes, content_type, status, created_at, last_accessed_at, expires_at) VALUES (?, ?, ?, ?, 'pdf', 'pdf', ?, 'application/pdf', 'active', ?, ?, ?)")
-        .bind(randomId("doc"), context.project.id, item.id, key, buffer.byteLength, context.now, context.now, daysFromNow(Number(context.env.PDF_RETENTION_DAYS || 30)))
+        .bind(docId, context.project.id, item.id, key, buffer.byteLength, context.now, context.now, daysFromNow(Number(context.env.PDF_RETENTION_DAYS || 30)))
         .run();
       await context.db.prepare("UPDATE literature SET pdf_status = 'downloaded', updated_at = ? WHERE id = ?").bind(context.now, item.id).run();
-      return { ok: true, status: `已下载 PDF ${Math.round(buffer.byteLength / 1024)} KB`, kind: "pdf", url, note: "已保存到 R2" };
+      return { ok: true, status: `已下载 PDF ${Math.round(buffer.byteLength / 1024)} KB`, kind: "pdf", url, documentId: docId, note: "已保存到 R2" };
     } catch (error) {
       failures.push(`${error.message} ${url}`);
     }

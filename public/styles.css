@@ -481,6 +481,53 @@ textarea { min-height: 86px; resize: vertical; }
 .mini-card-list {
   display: none;
 }
+.compact-file-list {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  background: #fbfdfb;
+}
+.compact-file-row {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px;
+  background: white;
+}
+.compact-file-main {
+  min-width: 0;
+}
+.compact-file-main strong,
+.compact-file-main small {
+  display: block;
+}
+.compact-file-main strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.compact-file-main small {
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.compact-file-detail summary {
+  min-height: 32px;
+}
+.detail-field a {
+  color: var(--brand);
+  font-weight: 900;
+}
 .mini-table table {
   min-width: 520px;
 }
@@ -778,6 +825,10 @@ td strong { display: block; max-width: 440px; }
   }
   .mini-card-list {
     display: grid;
+  }
+  .compact-file-list {
+    gap: 6px;
+    padding: 6px;
   }
   .table-wrap table {
     min-width: 600px;
