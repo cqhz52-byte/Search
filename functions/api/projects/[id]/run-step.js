@@ -208,6 +208,7 @@ async function runAnalyzeAbstracts(context) {
           "题名": source?.title || "",
           "来源": source?.source || "",
           "判断": item.decision,
+          "英文摘要": source?.abstract || "",
           "中文摘要": item.chineseAbstract || "",
           "理由": item.reason || ""
         };

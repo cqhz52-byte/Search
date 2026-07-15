@@ -37,6 +37,23 @@ button:disabled {
 }
 button.secondary { border-color: var(--line); background: white; color: var(--ink); }
 button.danger { border-color: #ffd0cc; background: var(--danger-bg); color: var(--danger); }
+.button-like {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid var(--brand);
+  border-radius: 8px;
+  padding: 0 12px;
+  background: var(--brand);
+  color: white;
+  font-weight: 800;
+  cursor: pointer;
+}
+.button-like input {
+  display: none;
+}
 .icon-button, .icon-only { width: 40px; padding: 0; border-color: var(--line); background: white; color: var(--ink); }
 .app-shell { width: min(1440px, 100%); margin: 0 auto; padding: 18px; }
 .topbar { display: flex; justify-content: space-between; align-items: center; gap: 18px; margin-bottom: 14px; }
@@ -480,6 +497,11 @@ textarea { min-height: 86px; resize: vertical; }
 }
 .mini-card-list {
   display: none;
+}
+.cnki-tools {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 .compact-file-list {
   display: grid;

@@ -1,4 +1,4 @@
-const APP_VERSION = "2026.07.15.9";
+const APP_VERSION = "2026.07.15.10";
 
 const state = {
   usage: null,
@@ -69,6 +69,7 @@ const Api = {
   createProject: (title, question) => api("/api/projects", { method: "POST", body: JSON.stringify({ title, question }) }),
   project: (id) => api(`/api/projects/${id}`),
   updateProject: (id, payload) => api(`/api/projects/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
+  importLiterature: (id, payload) => api(`/api/projects/${id}/import-literature`, { method: "POST", body: JSON.stringify(payload) }),
   updateScreening: (id, status) => api(`/api/literature/${id}/screening`, { method: "POST", body: JSON.stringify({ status }) }),
   runStep: (projectId, type) => api(`/api/projects/${projectId}/run-step`, { method: "POST", body: JSON.stringify({ type }) }),
   archiveProject: (id) => api(`/api/projects/${id}/archive`, { method: "POST" }),
@@ -406,6 +407,9 @@ function bindEvents() {
   document.querySelectorAll("[data-step-open]").forEach((button) => button.addEventListener("click", () => openStepDetail(button.dataset.projectId, button.dataset.stepType, button.dataset.stepOpen)));
   document.querySelector("[data-step-close]")?.addEventListener("click", closeStepDetail);
   document.querySelectorAll("[data-report-action]").forEach((button) => button.addEventListener("click", () => handleReportAction(button.dataset.reportAction)));
+  document.querySelectorAll("[data-copy-text]").forEach((button) => button.addEventListener("click", () => copyText(button.dataset.copyText)));
+  document.querySelectorAll("[data-open-url]").forEach((button) => button.addEventListener("click", () => window.open(button.dataset.openUrl, "_blank", "noopener")));
+  document.querySelectorAll("[data-cnki-import]").forEach((input) => input.addEventListener("change", () => importCnkiFile(input)));
   document.querySelectorAll("[data-select-project]").forEach((button) => button.addEventListener("click", () => refresh(button.dataset.selectProject)));
   document.querySelectorAll("[data-edit-project]").forEach((button) => button.addEventListener("click", () => {
     state.editingProjectId = button.dataset.editProject;
@@ -513,7 +517,7 @@ function bindEvents() {
 }
 
 function updateBanner() {
-  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>PDF 报告改为一键生成并分享；检索摘要报告压缩题名/来源/年份，摘要列更宽。</span></div><button data-action="dismiss-update">知道了</button></div>';
+  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>知网支持打开入口、复制高级检索词、导入摘要文件；摘要报告改为中英文对照表。</span></div><button data-action="dismiss-update">知道了</button></div>';
 }
 
 function runtimeStatus(activeCount) {
@@ -712,6 +716,135 @@ function reportActions() {
   </div>`;
 }
 
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text || "");
+    state.message = "已复制知网高级检索词。";
+  } catch {
+    state.message = "复制失败，请长按检索式手动复制。";
+  }
+  render();
+}
+
+async function importCnkiFile(input) {
+  const file = input.files?.[0];
+  input.value = "";
+  if (!file || !state.selectedId) return;
+  await runAction("导入知网摘要", async () => {
+    const text = await file.text();
+    const records = parseCnkiRecords(text, file.name);
+    if (!records.length) throw new Error("未识别到题录。请从知网导出 RIS/EndNote/TXT/CSV 格式，且包含题名和摘要。");
+    const result = await Api.importLiterature(state.selectedId, { source: "CNKI/知网", records });
+    state.message = `知网摘要导入完成：新增 ${result.inserted}，更新 ${result.updated}，跳过 ${result.skipped}`;
+    await refresh(state.selectedId);
+    return result;
+  }, `cnki-import:${state.selectedId}`);
+}
+
+function parseCnkiRecords(text, filename = "") {
+  const clean = String(text || "").replace(/^\ufeff/, "").trim();
+  if (!clean) return [];
+  if (/%0 |^TY  -|^T1  -|^TI  -/m.test(clean)) return parseRisRecords(clean);
+  if (/\t/.test(clean.split(/\r?\n/)[0] || "") || /\.csv$/i.test(filename)) return parseDelimitedRecords(clean);
+  return parseLabeledTextRecords(clean);
+}
+
+function parseRisRecords(text) {
+  const chunks = text.split(/\nER\s*-\s*/i).map((item) => item.trim()).filter(Boolean);
+  return chunks.map((chunk) => {
+    const record = {};
+    for (const line of chunk.split(/\r?\n/)) {
+      const match = line.match(/^([A-Z0-9]{2})\s+-\s*(.*)$/);
+      if (!match) continue;
+      const [, tag, value] = match;
+      if (["TI", "T1", "CT"].includes(tag)) record.title = appendField(record.title, value);
+      if (tag === "AB" || tag === "N2") record.abstract = appendField(record.abstract, value);
+      if (tag === "JO" || tag === "JF" || tag === "T2") record.journal = appendField(record.journal, value);
+      if (tag === "PY" || tag === "Y1") record.year = value;
+      if (tag === "DO") record.doi = value;
+    }
+    record.source = "CNKI/知网";
+    return record;
+  }).filter((item) => item.title);
+}
+
+function parseDelimitedRecords(text) {
+  const delimiter = text.includes("\t") ? "\t" : ",";
+  const rows = text.split(/\r?\n/).filter((line) => line.trim()).map((line) => splitDelimitedLine(line, delimiter));
+  if (rows.length < 2) return [];
+  const headers = rows[0].map(normalizeHeader);
+  return rows.slice(1).map((cells) => {
+    const item = {};
+    headers.forEach((header, index) => {
+      const value = cells[index] || "";
+      if (["title", "题名", "篇名", "标题"].includes(header)) item.title = value;
+      else if (["abstract", "摘要"].includes(header)) item.abstract = value;
+      else if (["journal", "来源", "刊名", "期刊"].includes(header)) item.journal = value;
+      else if (["year", "年份", "年"].includes(header)) item.year = value;
+      else if (header === "doi") item.doi = value;
+    });
+    item.source = "CNKI/知网";
+    return item;
+  }).filter((item) => item.title);
+}
+
+function parseLabeledTextRecords(text) {
+  const chunks = text.split(/\n\s*\n+/).map((item) => item.trim()).filter(Boolean);
+  return chunks.map((chunk) => {
+    const item = { source: "CNKI/知网" };
+    for (const line of chunk.split(/\r?\n/)) {
+      const match = line.match(/^([^:：]{1,12})[:：]\s*(.*)$/);
+      if (!match) continue;
+      const key = normalizeHeader(match[1]);
+      const value = match[2].trim();
+      if (["title", "题名", "篇名", "标题"].includes(key)) item.title = appendField(item.title, value);
+      else if (["abstract", "摘要"].includes(key)) item.abstract = appendField(item.abstract, value);
+      else if (["journal", "来源", "刊名", "期刊"].includes(key)) item.journal = appendField(item.journal, value);
+      else if (["year", "年份", "年"].includes(key)) item.year = value;
+      else if (key === "doi") item.doi = value;
+    }
+    if (!item.title) {
+      const lines = chunk.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      item.title = lines[0] || "";
+      item.abstract = item.abstract || lines.slice(1).join(" ").slice(0, 4000);
+    }
+    return item;
+  }).filter((item) => item.title);
+}
+
+function splitDelimitedLine(line, delimiter) {
+  const cells = [];
+  let cell = "";
+  let quoted = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (char === '"') {
+      if (quoted && line[index + 1] === '"') {
+        cell += '"';
+        index += 1;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (char === delimiter && !quoted) {
+      cells.push(cell.trim());
+      cell = "";
+    } else {
+      cell += char;
+    }
+  }
+  cells.push(cell.trim());
+  return cells;
+}
+
+function normalizeHeader(value) {
+  return String(value || "").replace(/^\ufeff/, "").trim().toLowerCase();
+}
+
+function appendField(current, value) {
+  const clean = String(value || "").trim();
+  return current ? `${current} ${clean}` : clean;
+}
+
 async function handleReportAction(action) {
   const report = currentStepReport();
   if (!report) {
@@ -794,14 +927,15 @@ function reportTableHtml(rows, title = "") {
 
 function isAbstractReportRows(rows, title = "") {
   const keys = Object.keys(rows[0] || {});
-  return /摘要结果|题录摘要|摘要/.test(title) && keys.includes("摘要") && keys.includes("题名");
+  return /摘要结果|题录摘要|摘要|初筛/.test(title) && keys.includes("题名") && (keys.includes("摘要") || keys.includes("英文摘要") || keys.includes("中文摘要"));
 }
 
 function reportAbstractTableHtml(rows) {
-  return `<table class="abstract-report-table"><colgroup><col class="meta-col"><col class="abstract-col"></colgroup><thead><tr><th>题名 / 来源 / 年份</th><th>摘要</th></tr></thead><tbody>${rows.map((row) => `
+  return `<table class="abstract-report-table"><colgroup><col class="meta-col"><col class="english-col"><col class="chinese-col"></colgroup><thead><tr><th>题名 / 来源 / 年份</th><th>英文摘要</th><th>中文摘要</th></tr></thead><tbody>${rows.map((row) => `
     <tr>
       <td class="meta-cell"><strong>${escapeHtml(row["题名"] || "-")}</strong><small>${escapeHtml(row["来源"] || "-")} · ${escapeHtml(row["年份"] || "-")}</small></td>
-      <td class="abstract-cell">${escapeHtml(compactReportText(row["摘要"] || "-", 900))}</td>
+      <td class="abstract-cell">${escapeHtml(compactReportText(row["英文摘要"] || row["摘要"] || "-", 700))}</td>
+      <td class="abstract-cell">${escapeHtml(compactReportText(row["中文摘要"] || "执行“AI 分析摘要”后生成中文摘要。", 520))}</td>
     </tr>`).join("")}</tbody></table>`;
 }
 
@@ -986,7 +1120,8 @@ function drawPdfAbstractRows(rows, tools) {
     tools.y += 2 * scale;
     drawText(row["题名"] || "-", margin, width - margin * 2, { size: 10, bold: true, lineHeight: 14, maxLines: 2 });
     drawText(`${row["来源"] || "-"} · ${row["年份"] || "-"}`, margin, width - margin * 2, { size: 8.5, lineHeight: 12, color: "#66736d", maxLines: 1 });
-    drawText(compactReportText(row["摘要"] || "-", 520), margin, width - margin * 2, { size: 9, lineHeight: 13, maxLines: 6 });
+    drawText(`英文摘要：${compactReportText(row["英文摘要"] || row["摘要"] || "-", 420)}`, margin, width - margin * 2, { size: 8.5, lineHeight: 12.5, maxLines: 5 });
+    drawText(`中文摘要：${compactReportText(row["中文摘要"] || "执行“AI 分析摘要”后生成中文摘要。", 300)}`, margin, width - margin * 2, { size: 8.5, lineHeight: 12.5, maxLines: 4 });
     rule();
   }
 }
@@ -1109,8 +1244,9 @@ function reportStyle() {
     h2{font-size:17px;margin:24px 0 8px;color:#17201d}
     p{margin:6px 0;white-space:pre-wrap}
     table{width:100%;border-collapse:collapse;margin-top:8px;table-layout:fixed}
-    .abstract-report-table .meta-col{width:28%}
-    .abstract-report-table .abstract-col{width:72%}
+    .abstract-report-table .meta-col{width:24%}
+    .abstract-report-table .english-col{width:40%}
+    .abstract-report-table .chinese-col{width:36%}
     .abstract-report-table .meta-cell strong{display:block;font-size:12px;line-height:1.35}
     .abstract-report-table .meta-cell small{display:block;margin-top:4px;color:#66736d}
     .abstract-report-table .abstract-cell{font-size:12px;line-height:1.45}
@@ -1140,7 +1276,7 @@ function renderArtifactLike(artifact) {
     const code = section.code ? `<pre>${escapeHtml(section.code)}</pre>` : "";
     const items = section.items?.length ? `<ul>${section.items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : "";
     const rows = section.rows?.length ? miniTable(section.rows, Boolean(section.compact)) : "";
-    const body = `${section.body ? `<p>${escapeHtml(section.body)}</p>` : ""}${items}${rows}${code}`;
+    const body = `${section.body ? `<p>${escapeHtml(section.body)}</p>` : ""}${cnkiActions(section)}${items}${rows}${code}`;
     const rowCount = section.rows?.length || 0;
     const shouldCollapse = rowCount > 8 || /摘要|题录|清单|队列|候选|素材/.test(section.title || "");
     if (shouldCollapse) {
@@ -1149,6 +1285,18 @@ function renderArtifactLike(artifact) {
     return `<section class="artifact-section"><h3>${escapeHtml(section.title)}</h3>${body}</section>`;
   }).join("");
   return `${artifact.summary ? `<p>${escapeHtml(artifact.summary)}</p>` : ""}${sections}`;
+}
+
+function cnkiActions(section) {
+  if (!/CNKI|知网/.test(section.title || "")) return "";
+  const row = section.rows?.[0] || {};
+  const query = row["中文检索式"] || row["检索式"] || "";
+  const url = row["入口"] || "https://kns.cnki.net/kns8/AdvSearch?dbprefix=SCDB";
+  return `<div class="cnki-tools">
+    <button data-open-url="${escapeAttr(url)}">${icon("drive")} 打开知网</button>
+    <button class="secondary" data-copy-text="${escapeAttr(query)}">${icon("file")} 复制高级检索词</button>
+    <label class="button-like">${icon("plus")} 导入知网摘要文件<input type="file" data-cnki-import accept=".txt,.ris,.csv,.tsv,.xls,.html,.htm"></label>
+  </div>`;
 }
 
 function stepProcessText(type, status, busy) {
