@@ -764,6 +764,19 @@ td strong { display: block; max-width: 440px; }
   background: rgba(255, 254, 249, 0.98);
   box-shadow: 0 8px 24px rgba(26, 37, 33, 0.08);
 }
+.report-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+.report-actions button {
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 12px;
+}
 .step-detail-topbar > div {
   min-width: 0;
 }
@@ -809,6 +822,16 @@ td strong { display: block; max-width: 440px; }
     width: calc(100% - 24px);
   }
   .topbar, .section-title, .trash-row, .user-row, .job-row { align-items: stretch; flex-direction: column; }
+  .step-detail-topbar {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+  .report-actions {
+    width: 100%;
+    margin-left: 0;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
   .document-row {
     align-items: stretch;
     flex-direction: column;

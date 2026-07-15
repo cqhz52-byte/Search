@@ -1,4 +1,4 @@
-const APP_VERSION = "2026.07.15.6";
+const APP_VERSION = "2026.07.15.7";
 
 const state = {
   usage: null,
@@ -405,6 +405,7 @@ function bindEvents() {
   document.querySelectorAll("[data-mode]").forEach((button) => button.addEventListener("click", () => setExecutionMode(button.dataset.mode)));
   document.querySelectorAll("[data-step-open]").forEach((button) => button.addEventListener("click", () => openStepDetail(button.dataset.projectId, button.dataset.stepType, button.dataset.stepOpen)));
   document.querySelector("[data-step-close]")?.addEventListener("click", closeStepDetail);
+  document.querySelectorAll("[data-report-action]").forEach((button) => button.addEventListener("click", () => handleReportAction(button.dataset.reportAction)));
   document.querySelectorAll("[data-select-project]").forEach((button) => button.addEventListener("click", () => refresh(button.dataset.selectProject)));
   document.querySelectorAll("[data-edit-project]").forEach((button) => button.addEventListener("click", () => {
     state.editingProjectId = button.dataset.editProject;
@@ -512,7 +513,7 @@ function bindEvents() {
 }
 
 function updateBanner() {
-  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>检索摘要新增 CNKI/知网中文摘要检索式和入口，URL 可直接点击打开。</span></div><button data-action="dismiss-update">知道了</button></div>';
+  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>每一步执行结果可生成报告，支持保存 PDF、下载 Word 和手机一键分享。</span></div><button data-action="dismiss-update">知道了</button></div>';
 }
 
 function runtimeStatus(activeCount) {
@@ -697,9 +698,183 @@ function stepDetailPage() {
         <strong>${escapeHtml(title)}</strong>
         <span>第 ${number} 步 · ${escapeHtml(jobLabels[active.type])} · ${escapeHtml(statusText)}</span>
       </div>
+      ${isResult && artifact?.status === "completed" ? reportActions() : ""}
     </header>
     <main class="step-detail-content">${body}</main>
   </div>`;
+}
+
+function reportActions() {
+  return `<div class="report-actions">
+    <button class="secondary" data-report-action="pdf">${icon("file")} PDF</button>
+    <button class="secondary" data-report-action="word">${icon("file")} Word</button>
+    <button data-report-action="share">${icon("drive")} 分享</button>
+  </div>`;
+}
+
+async function handleReportAction(action) {
+  const report = currentStepReport();
+  if (!report) {
+    state.message = "当前步骤还没有可导出的报告。";
+    render();
+    return;
+  }
+  if (action === "pdf") {
+    printReport(report);
+    return;
+  }
+  const blob = reportBlob(report);
+  if (action === "word") {
+    downloadBlob(blob, `${report.fileName}.doc`);
+    state.message = "Word 报告已生成。";
+    render();
+    return;
+  }
+  await shareReport(report, blob);
+}
+
+function currentStepReport() {
+  const active = state.activeStepDetail;
+  if (!active || active.view !== "result") return null;
+  const detail = state.detail?.project?.id === active.projectId ? state.detail : null;
+  const artifact = projectArtifacts(active.projectId)[active.type];
+  if (!detail || !artifact || artifact.status !== "completed") return null;
+  const number = Object.keys(jobLabels).indexOf(active.type) + 1;
+  const project = detail.project || {};
+  const title = `${project.title || "文献证据项目"} - 第 ${number} 步 ${jobLabels[active.type]}`;
+  const generatedAt = new Date().toLocaleString();
+  const fileName = cleanReportFileName(`${project.title || "文献证据"}-第${number}步-${jobLabels[active.type]}`);
+  return {
+    title,
+    fileName,
+    generatedAt,
+    html: buildReportHtml({ title, generatedAt, project, artifact, stepNumber: number, stepName: jobLabels[active.type] }),
+    text: buildReportText({ title, generatedAt, project, artifact, stepNumber: number, stepName: jobLabels[active.type] })
+  };
+}
+
+function buildReportHtml({ title, generatedAt, project, artifact, stepNumber, stepName }) {
+  const sections = (artifact.sections || []).map(reportSectionHtml).join("");
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>${reportStyle()}</head><body>
+    <main class="report">
+      <header>
+        <h1>${escapeHtml(title)}</h1>
+        <p>项目：${escapeHtml(project.title || "-")}</p>
+        <p>研究问题：${escapeHtml(project.question || "-")}</p>
+        <p>步骤：第 ${stepNumber} 步 · ${escapeHtml(stepName)} · 生成时间：${escapeHtml(generatedAt)}</p>
+      </header>
+      ${artifact.summary ? `<section><h2>摘要</h2><p>${escapeHtml(artifact.summary)}</p></section>` : ""}
+      ${sections || "<section><h2>结果</h2><p>本步骤暂无结构化输出。</p></section>"}
+    </main>
+  </body></html>`;
+}
+
+function reportSectionHtml(section) {
+  const body = [
+    section.body ? `<p>${escapeHtml(section.body)}</p>` : "",
+    section.items?.length ? `<ul>${section.items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : "",
+    section.rows?.length ? reportTableHtml(section.rows) : "",
+    section.code ? `<pre>${escapeHtml(section.code)}</pre>` : ""
+  ].join("");
+  return `<section><h2>${escapeHtml(section.title || "结果")}</h2>${body}</section>`;
+}
+
+function reportTableHtml(rows) {
+  const keys = Object.keys(rows[0] || {});
+  if (!keys.length) return "";
+  return `<table><thead><tr>${keys.map((key) => `<th>${escapeHtml(key)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) =>
+    `<tr>${keys.map((key) => `<td>${escapeHtml(row[key] || "-")}</td>`).join("")}</tr>`
+  ).join("")}</tbody></table>`;
+}
+
+function buildReportText({ title, generatedAt, project, artifact, stepNumber, stepName }) {
+  const lines = [
+    title,
+    `项目：${project.title || "-"}`,
+    `研究问题：${project.question || "-"}`,
+    `步骤：第 ${stepNumber} 步 · ${stepName}`,
+    `生成时间：${generatedAt}`,
+    "",
+    artifact.summary || ""
+  ];
+  for (const section of artifact.sections || []) {
+    lines.push("", `【${section.title || "结果"}】`);
+    if (section.body) lines.push(section.body);
+    if (section.items?.length) lines.push(...section.items.map((item) => `- ${item}`));
+    if (section.code) lines.push(section.code);
+    for (const row of section.rows || []) {
+      lines.push(Object.entries(row).map(([key, value]) => `${key}: ${value || "-"}`).join("；"));
+    }
+  }
+  return lines.filter((line, index) => line || lines[index - 1]).join("\n");
+}
+
+function reportBlob(report) {
+  return new Blob(["\ufeff", report.html], { type: "application/msword;charset=utf-8" });
+}
+
+function printReport(report) {
+  const win = window.open("", "_blank");
+  if (!win) {
+    state.message = "浏览器拦截了报告窗口，请允许弹窗后重试。";
+    render();
+    return;
+  }
+  win.document.open();
+  win.document.write(report.html);
+  win.document.close();
+  win.focus();
+  setTimeout(() => win.print(), 300);
+}
+
+async function shareReport(report, blob) {
+  const file = new File([blob], `${report.fileName}.doc`, { type: "application/msword" });
+  try {
+    if (navigator.canShare?.({ files: [file] })) {
+      await navigator.share({ title: report.title, text: report.text.slice(0, 500), files: [file] });
+      return;
+    }
+    if (navigator.share) {
+      await navigator.share({ title: report.title, text: report.text.slice(0, 1500) });
+      return;
+    }
+  } catch (error) {
+    if (error.name === "AbortError") return;
+  }
+  downloadBlob(blob, `${report.fileName}.doc`);
+  state.message = "当前浏览器不支持直接分享文件，已改为下载 Word 报告。";
+  render();
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function cleanReportFileName(value) {
+  return String(value || "步骤报告").replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim().slice(0, 90);
+}
+
+function reportStyle() {
+  return `<style>
+    body{margin:0;background:#fff;color:#17201d;font-family:"Microsoft YaHei",Arial,sans-serif;line-height:1.6}
+    .report{max-width:980px;margin:0 auto;padding:28px}
+    header{border-bottom:2px solid #0f766e;margin-bottom:20px;padding-bottom:12px}
+    h1{font-size:24px;margin:0 0 12px;color:#0f766e}
+    h2{font-size:17px;margin:24px 0 8px;color:#17201d}
+    p{margin:6px 0;white-space:pre-wrap}
+    table{width:100%;border-collapse:collapse;margin-top:8px;table-layout:fixed}
+    th,td{border:1px solid #d9e1dc;padding:8px;vertical-align:top;font-size:12px;word-break:break-word}
+    th{background:#eef6f2;text-align:left}
+    pre{white-space:pre-wrap;word-break:break-word;border:1px solid #d9e1dc;background:#f7faf8;padding:10px}
+    @media print{.report{padding:0} h2{break-after:avoid} table{break-inside:auto} tr{break-inside:avoid}}
+  </style>`;
 }
 
 function renderStepOutput(type, number, artifact) {
