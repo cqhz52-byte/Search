@@ -1,4 +1,4 @@
-const APP_VERSION = "2026.07.15.7";
+const APP_VERSION = "2026.07.15.8";
 
 const state = {
   usage: null,
@@ -513,7 +513,7 @@ function bindEvents() {
 }
 
 function updateBanner() {
-  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>每一步执行结果可生成报告，支持保存 PDF、下载 Word 和手机一键分享。</span></div><button data-action="dismiss-update">知道了</button></div>';
+  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>PDF 报告改为一键生成并分享；检索摘要报告压缩题名/来源/年份，摘要列更宽。</span></div><button data-action="dismiss-update">知道了</button></div>';
 }
 
 function runtimeStatus(activeCount) {
@@ -706,7 +706,7 @@ function stepDetailPage() {
 
 function reportActions() {
   return `<div class="report-actions">
-    <button class="secondary" data-report-action="pdf">${icon("file")} PDF</button>
+    <button class="secondary" data-report-action="pdf">${icon("file")} 分享PDF</button>
     <button class="secondary" data-report-action="word">${icon("file")} Word</button>
     <button data-report-action="share">${icon("drive")} 分享</button>
   </div>`;
@@ -720,7 +720,7 @@ async function handleReportAction(action) {
     return;
   }
   if (action === "pdf") {
-    printReport(report);
+    await sharePdfReport(report);
     return;
   }
   const blob = reportBlob(report);
@@ -730,7 +730,7 @@ async function handleReportAction(action) {
     render();
     return;
   }
-  await shareReport(report, blob);
+  await sharePdfReport(report);
 }
 
 function currentStepReport() {
@@ -748,6 +748,10 @@ function currentStepReport() {
     title,
     fileName,
     generatedAt,
+    project,
+    artifact,
+    stepNumber: number,
+    stepName: jobLabels[active.type],
     html: buildReportHtml({ title, generatedAt, project, artifact, stepNumber: number, stepName: jobLabels[active.type] }),
     text: buildReportText({ title, generatedAt, project, artifact, stepNumber: number, stepName: jobLabels[active.type] })
   };
@@ -773,18 +777,32 @@ function reportSectionHtml(section) {
   const body = [
     section.body ? `<p>${escapeHtml(section.body)}</p>` : "",
     section.items?.length ? `<ul>${section.items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : "",
-    section.rows?.length ? reportTableHtml(section.rows) : "",
+    section.rows?.length ? reportTableHtml(section.rows, section.title) : "",
     section.code ? `<pre>${escapeHtml(section.code)}</pre>` : ""
   ].join("");
   return `<section><h2>${escapeHtml(section.title || "结果")}</h2>${body}</section>`;
 }
 
-function reportTableHtml(rows) {
+function reportTableHtml(rows, title = "") {
   const keys = Object.keys(rows[0] || {});
   if (!keys.length) return "";
+  if (isAbstractReportRows(rows, title)) return reportAbstractTableHtml(rows);
   return `<table><thead><tr>${keys.map((key) => `<th>${escapeHtml(key)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) =>
     `<tr>${keys.map((key) => `<td>${escapeHtml(row[key] || "-")}</td>`).join("")}</tr>`
   ).join("")}</tbody></table>`;
+}
+
+function isAbstractReportRows(rows, title = "") {
+  const keys = Object.keys(rows[0] || {});
+  return /摘要结果|题录摘要|摘要/.test(title) && keys.includes("摘要") && keys.includes("题名");
+}
+
+function reportAbstractTableHtml(rows) {
+  return `<table class="abstract-report-table"><colgroup><col class="meta-col"><col class="abstract-col"></colgroup><thead><tr><th>题名 / 来源 / 年份</th><th>摘要</th></tr></thead><tbody>${rows.map((row) => `
+    <tr>
+      <td class="meta-cell"><strong>${escapeHtml(row["题名"] || "-")}</strong><small>${escapeHtml(row["来源"] || "-")} · ${escapeHtml(row["年份"] || "-")}</small></td>
+      <td class="abstract-cell">${escapeHtml(compactReportText(row["摘要"] || "-", 900))}</td>
+    </tr>`).join("")}</tbody></table>`;
 }
 
 function buildReportText({ title, generatedAt, project, artifact, stepNumber, stepName }) {
@@ -827,6 +845,34 @@ function printReport(report) {
   setTimeout(() => win.print(), 300);
 }
 
+async function sharePdfReport(report) {
+  state.message = "正在生成 PDF 报告...";
+  render();
+  try {
+    const blob = await createPdfReportBlob(report);
+    const file = new File([blob], `${report.fileName}.pdf`, { type: "application/pdf" });
+    if (navigator.canShare?.({ files: [file] })) {
+      await navigator.share({ title: report.title, text: report.text.slice(0, 500), files: [file] });
+      state.message = "PDF 报告已打开分享面板。";
+      render();
+      return;
+    }
+    if (navigator.share) {
+      await navigator.share({ title: report.title, text: report.text.slice(0, 1500) });
+      downloadBlob(blob, `${report.fileName}.pdf`);
+      state.message = "当前浏览器只支持分享文字，PDF 已同时下载。";
+      render();
+      return;
+    }
+    downloadBlob(blob, `${report.fileName}.pdf`);
+    state.message = "当前浏览器不支持直接分享文件，PDF 报告已下载。";
+    render();
+  } catch (error) {
+    state.message = `PDF 生成失败：${error.message || error}`;
+    render();
+  }
+}
+
 async function shareReport(report, blob) {
   const file = new File([blob], `${report.fileName}.doc`, { type: "application/msword" });
   try {
@@ -857,6 +903,213 @@ function downloadBlob(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+async function createPdfReportBlob(report) {
+  const pages = renderReportToJpegs(report);
+  return new Blob([buildPdfFromJpegs(pages)], { type: "application/pdf" });
+}
+
+function renderReportToJpegs(report) {
+  const pageWidth = 595;
+  const pageHeight = 842;
+  const scale = 2;
+  const width = pageWidth * scale;
+  const height = pageHeight * scale;
+  const margin = 42 * scale;
+  const bottom = height - margin;
+  const lineHeight = 17 * scale;
+  const pages = [];
+  let canvas;
+  let ctx;
+  let y;
+
+  const newPage = () => {
+    canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = "#17201d";
+    y = margin;
+  };
+  const finishPage = () => {
+    if (canvas) pages.push({ data: dataUrlToBytes(canvas.toDataURL("image/jpeg", 0.88)), width, height });
+  };
+  const ensure = (needed) => {
+    if (y + needed <= bottom) return;
+    finishPage();
+    newPage();
+  };
+  const drawText = (text, x, maxWidth, options = {}) => {
+    const fontSize = (options.size || 11) * scale;
+    const lh = (options.lineHeight || options.size * 1.45 || 16) * scale;
+    ctx.font = `${options.bold ? "700 " : ""}${fontSize}px "Microsoft YaHei", Arial, sans-serif`;
+    ctx.fillStyle = options.color || "#17201d";
+    const lines = wrapCanvasText(ctx, String(text || "-"), maxWidth, options.maxLines || 0);
+    ensure(lines.length * lh + 4 * scale);
+    for (const line of lines) {
+      ctx.fillText(line, x, y);
+      y += lh;
+    }
+    return lines.length;
+  };
+  const rule = () => {
+    ensure(10 * scale);
+    ctx.strokeStyle = "#d9e1dc";
+    ctx.lineWidth = scale;
+    ctx.beginPath();
+    ctx.moveTo(margin, y);
+    ctx.lineTo(width - margin, y);
+    ctx.stroke();
+    y += 10 * scale;
+  };
+
+  newPage();
+  drawText(report.title, margin, width - margin * 2, { size: 18, bold: true, color: "#0f766e", lineHeight: 24 });
+  drawText(`项目：${report.project?.title || "-"}`, margin, width - margin * 2, { size: 10, lineHeight: 14 });
+  drawText(`研究问题：${report.project?.question || "-"}`, margin, width - margin * 2, { size: 10, lineHeight: 14, maxLines: 3 });
+  drawText(`步骤：第 ${report.stepNumber} 步 · ${report.stepName} · 生成时间：${report.generatedAt}`, margin, width - margin * 2, { size: 10, lineHeight: 14 });
+  rule();
+  if (report.artifact?.summary) {
+    drawText("摘要", margin, width - margin * 2, { size: 13, bold: true, lineHeight: 18 });
+    drawText(report.artifact.summary, margin, width - margin * 2, { size: 10, lineHeight: 15, maxLines: 8 });
+    y += 8 * scale;
+  }
+
+  for (const section of report.artifact?.sections || []) {
+    ensure(44 * scale);
+    drawText(section.title || "结果", margin, width - margin * 2, { size: 13, bold: true, lineHeight: 18 });
+    if (section.body) drawText(section.body, margin, width - margin * 2, { size: 10, lineHeight: 15, maxLines: 12 });
+    if (section.items?.length) {
+      for (const item of section.items) drawText(`• ${item}`, margin + 10 * scale, width - margin * 2 - 10 * scale, { size: 10, lineHeight: 15, maxLines: 3 });
+    }
+    if (section.code) drawText(section.code, margin, width - margin * 2, { size: 9, lineHeight: 13, maxLines: 16, color: "#31403b" });
+    if (section.rows?.length) {
+      if (isAbstractReportRows(section.rows, section.title)) drawPdfAbstractRows(section.rows, { ctx, scale, margin, width, bottom, ensure, drawText, rule, get y() { return y; }, set y(value) { y = value; } });
+      else drawPdfKeyValueRows(section.rows, { scale, margin, width, drawText, get y() { return y; }, set y(value) { y = value; } });
+    }
+    y += 8 * scale;
+  }
+  finishPage();
+  return pages;
+}
+
+function drawPdfAbstractRows(rows, tools) {
+  const { scale, margin, width, drawText, rule } = tools;
+  for (const row of rows) {
+    tools.y += 2 * scale;
+    drawText(row["题名"] || "-", margin, width - margin * 2, { size: 10, bold: true, lineHeight: 14, maxLines: 2 });
+    drawText(`${row["来源"] || "-"} · ${row["年份"] || "-"}`, margin, width - margin * 2, { size: 8.5, lineHeight: 12, color: "#66736d", maxLines: 1 });
+    drawText(compactReportText(row["摘要"] || "-", 520), margin, width - margin * 2, { size: 9, lineHeight: 13, maxLines: 6 });
+    rule();
+  }
+}
+
+function drawPdfKeyValueRows(rows, tools) {
+  const { scale, margin, width, drawText } = tools;
+  for (const row of rows) {
+    drawText(Object.entries(row).map(([key, value]) => `${key}: ${compactReportText(value || "-", 180)}`).join("；"), margin, width - margin * 2, { size: 9, lineHeight: 13, maxLines: 6 });
+    tools.y += 3 * scale;
+  }
+}
+
+function compactReportText(value, maxLength = 700) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+}
+
+function wrapCanvasText(ctx, text, maxWidth, maxLines = 0) {
+  const normalized = String(text || "").replace(/\r/g, "").split("\n");
+  const lines = [];
+  for (const part of normalized) {
+    let line = "";
+    for (const token of canvasTokens(part)) {
+      const next = line ? `${line}${token}` : token.trimStart();
+      if (ctx.measureText(next).width <= maxWidth || !line) {
+        line = next;
+      } else {
+        lines.push(line.trimEnd());
+        line = token.trimStart();
+        if (maxLines && lines.length >= maxLines) return ellipsizeLastLine(lines);
+      }
+    }
+    if (line) lines.push(line.trimEnd());
+    if (maxLines && lines.length >= maxLines) return ellipsizeLastLine(lines);
+  }
+  return lines.length ? lines : ["-"];
+}
+
+function canvasTokens(text) {
+  const tokens = [];
+  for (const word of String(text).split(/(\s+)/)) {
+    if (!word) continue;
+    if (word.length > 24 || /[\u4e00-\u9fff]/.test(word)) tokens.push(...word.split(""));
+    else tokens.push(word);
+  }
+  return tokens;
+}
+
+function ellipsizeLastLine(lines) {
+  if (!lines.length) return lines;
+  lines[lines.length - 1] = `${lines[lines.length - 1].replace(/\.{3,}$/g, "")}...`;
+  return lines;
+}
+
+function buildPdfFromJpegs(pages) {
+  const encoder = new TextEncoder();
+  const chunks = [];
+  const offsets = [];
+  let length = 0;
+  const add = (chunk) => {
+    const bytes = typeof chunk === "string" ? encoder.encode(chunk) : chunk;
+    chunks.push(bytes);
+    length += bytes.length;
+  };
+  const objectCount = 2 + pages.length * 3;
+  add("%PDF-1.4\n%\xE2\xE3\xCF\xD3\n");
+  const obj = (id, body) => {
+    offsets[id] = length;
+    add(`${id} 0 obj\n${body}\nendobj\n`);
+  };
+  const streamObj = (id, dict, data) => {
+    offsets[id] = length;
+    add(`${id} 0 obj\n${dict} /Length ${data.length} >>\nstream\n`);
+    add(data);
+    add("\nendstream\nendobj\n");
+  };
+  const pageIds = pages.map((_, index) => 3 + index * 3);
+  obj(1, "<< /Type /Catalog /Pages 2 0 R >>");
+  obj(2, `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(" ")}] /Count ${pages.length} >>`);
+  pages.forEach((page, index) => {
+    const pageId = 3 + index * 3;
+    const contentId = pageId + 1;
+    const imageId = pageId + 2;
+    const imageName = `Im${index + 1}`;
+    const content = encoder.encode(`q\n595 0 0 842 0 0 cm\n/${imageName} Do\nQ`);
+    obj(pageId, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /XObject << /${imageName} ${imageId} 0 R >> >> /Contents ${contentId} 0 R >>`);
+    streamObj(contentId, "<<", content);
+    streamObj(imageId, `<< /Type /XObject /Subtype /Image /Width ${page.width} /Height ${page.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode`, page.data);
+  });
+  const xref = length;
+  add(`xref\n0 ${objectCount + 1}\n0000000000 65535 f \n`);
+  for (let id = 1; id <= objectCount; id += 1) add(`${String(offsets[id] || 0).padStart(10, "0")} 00000 n \n`);
+  add(`trailer\n<< /Size ${objectCount + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
+  const output = new Uint8Array(length);
+  let position = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, position);
+    position += chunk.length;
+  }
+  return output;
+}
+
+function dataUrlToBytes(url) {
+  const binary = atob(url.split(",")[1] || "");
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
 function cleanReportFileName(value) {
   return String(value || "步骤报告").replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim().slice(0, 90);
 }
@@ -870,6 +1123,11 @@ function reportStyle() {
     h2{font-size:17px;margin:24px 0 8px;color:#17201d}
     p{margin:6px 0;white-space:pre-wrap}
     table{width:100%;border-collapse:collapse;margin-top:8px;table-layout:fixed}
+    .abstract-report-table .meta-col{width:28%}
+    .abstract-report-table .abstract-col{width:72%}
+    .abstract-report-table .meta-cell strong{display:block;font-size:12px;line-height:1.35}
+    .abstract-report-table .meta-cell small{display:block;margin-top:4px;color:#66736d}
+    .abstract-report-table .abstract-cell{font-size:12px;line-height:1.45}
     th,td{border:1px solid #d9e1dc;padding:8px;vertical-align:top;font-size:12px;word-break:break-word}
     th{background:#eef6f2;text-align:left}
     pre{white-space:pre-wrap;word-break:break-word;border:1px solid #d9e1dc;background:#f7faf8;padding:10px}
