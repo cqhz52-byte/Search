@@ -1,4 +1,4 @@
-const APP_VERSION = "2026.07.15.1";
+const APP_VERSION = "2026.07.15.2";
 
 const state = {
   usage: null,
@@ -507,7 +507,7 @@ function bindEvents() {
 }
 
 function updateBanner() {
-  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>全文获取改为优先保存开放全文 XML；PDF 被验证码或超时拦截时也能继续全文分析。</span></div><button data-action="dismiss-update">知道了</button></div>';
+  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>全文获取默认只抓开放全文 XML，并跳过已完成/失败题录，减少 Cloudflare 免费额度消耗。</span></div><button data-action="dismiss-update">知道了</button></div>';
 }
 
 function mobileTabbar() {
@@ -815,7 +815,7 @@ function buildStepInput(type, detail) {
       summary: "本步骤输入是下载清单，系统会按清单尝试获取开放全文。",
       sections: [
         { title: "获取队列", rows: included.map((item) => ({ "题名": item.title, "当前全文状态": statusLabel(item.pdf_status || "not_requested"), "来源": item.source || "-" })) },
-        { title: "资源保护", body: "优先保存开放全文 XML；PDF 只在能直接取得且确认是 PDF 文件时保存。" }
+        { title: "资源保护", body: "默认只保存开放全文 XML；已成功或失败的题录会跳过。PDF 附件抓取需单独启用，避免验证码、超时和重复请求消耗免费额度。" }
       ]
     }),
     parse_and_analyze_pdfs: () => ({

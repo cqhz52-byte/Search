@@ -202,6 +202,7 @@ async function runAnalyzeAbstracts(context) {
 async function runGenerateDownloadList(context) {
   const rows = await getCandidateLiterature(context.db, context.project.id, 50);
   for (const row of rows) {
+    if (["downloaded", "fulltext_ready"].includes(row.pdf_status)) continue;
     await context.db.prepare("UPDATE literature SET pdf_status = ?, updated_at = ? WHERE id = ?")
       .bind(row.pmcid ? "listed" : "manual_required", context.now, row.id)
       .run();
@@ -218,7 +219,8 @@ async function runGenerateDownloadList(context) {
 }
 
 async function runDownloadPdfs(context) {
-  const rows = (await getCandidateLiterature(context.db, context.project.id, 10)).filter((item) => item.pmcid);
+  const rows = (await getCandidateLiterature(context.db, context.project.id, 10))
+    .filter((item) => item.pmcid && !["downloaded", "fulltext_ready", "failed"].includes(item.pdf_status));
   const results = [];
   for (const item of rows.slice(0, 5)) {
     const result = await tryStoreOpenFullText(context, item);
@@ -227,7 +229,7 @@ async function runDownloadPdfs(context) {
   return {
     type: context.type,
     status: "completed",
-    summary: `已小批量尝试获取开放全文：${results.length} 条。优先保存可解析全文 XML，PDF 仅作为可选附件。`,
+    summary: rows.length ? `已小批量尝试获取开放全文：${results.length} 条。优先保存可解析全文 XML，PDF 仅作为可选附件。` : "没有需要重复获取的全文；已保存或失败的题录会被跳过以节省免费额度。",
     data: { attempted: results.length },
     sections: [{ title: "全文获取结果", rows: results }]
   };
@@ -650,6 +652,15 @@ async function tryStoreOpenFullText(context, item) {
   if (!context.env.LIT_R2) return { status: "未绑定 R2", note: "已保留全文清单" };
   const xmlResult = await tryStoreFullTextXml(context, item);
   if (xmlResult.ok) return xmlResult;
+  if (String(context.env.ENABLE_PDF_FALLBACK || "").toLowerCase() !== "true") {
+    await context.db.prepare("UPDATE literature SET pdf_status = 'failed', updated_at = ? WHERE id = ?").bind(context.now, item.id).run();
+    return {
+      status: "未取得开放全文 XML",
+      kind: "-",
+      url: xmlResult.url || "",
+      note: `${xmlResult.note || "全文 XML 不可用。"} PDF 附件抓取默认关闭，以节省 Cloudflare 免费额度。`
+    };
+  }
   const pdfResult = await tryDownloadOpenPdf(context, item);
   if (pdfResult.ok) return pdfResult;
   await context.db.prepare("UPDATE literature SET pdf_status = 'failed', updated_at = ? WHERE id = ?").bind(context.now, item.id).run();
