@@ -1,4 +1,4 @@
-const APP_VERSION = "2026.07.14.14";
+const APP_VERSION = "2026.07.14.15";
 
 const state = {
   usage: null,
@@ -507,7 +507,7 @@ function bindEvents() {
 }
 
 function updateBanner() {
-  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>全文解析改为文本型全文/XML 抽取 + DeepSeek 结构化分析，不再默认依赖 LlamaParse。</span></div><button data-action="dismiss-update">知道了</button></div>';
+  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>AI 摘要分析结果新增“查看中文详情”，可展开中文摘要、AI 理由和长文本说明。</span></div><button data-action="dismiss-update">知道了</button></div>';
 }
 
 function mobileTabbar() {
@@ -728,17 +728,40 @@ function miniTable(rows) {
   const keys = Object.keys(rows[0] || {});
   if (!keys.length) return "";
   return `<div class="mini-table"><table><thead><tr>${keys.map((key) => `<th>${escapeHtml(key)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) =>
-    `<tr>${keys.map((key) => `<td>${escapeHtml(row[key])}</td>`).join("")}</tr>`
+    `<tr>${keys.map((key) => miniTableCell(row, key)).join("")}</tr>`
   ).join("")}</tbody></table><div class="mini-card-list">${rows.map((row) => miniCard(row, keys)).join("")}</div></div>`;
+}
+
+function miniTableCell(row, key) {
+  if (isDetailField(key, row[key])) {
+    return `<td>${detailBlock("查看详情", [{ key, value: row[key] }], "table-detail")}</td>`;
+  }
+  return `<td>${escapeHtml(row[key])}</td>`;
 }
 
 function miniCard(row, keys) {
   const title = row["题名"] || row["文献"] || row["题录ID"] || row["PMCID"] || keys.map((key) => row[key]).find(Boolean) || "记录";
+  const detailFields = keys
+    .filter((key) => isDetailField(key, row[key]))
+    .map((key) => ({ key, value: row[key] }));
   const body = keys
-    .filter((key) => row[key] !== title)
+    .filter((key) => row[key] !== title && !isDetailField(key, row[key]))
     .map((key) => `<div class="mini-card-field"><span>${escapeHtml(key)}</span><p>${escapeHtml(row[key] || "-")}</p></div>`)
     .join("");
-  return `<article class="mini-card-row"><header><strong>${escapeHtml(title)}</strong></header>${body}${screeningControls(row)}</article>`;
+  const detail = detailFields.length ? detailBlock("查看中文详情", detailFields, "mini-card-detail") : "";
+  return `<article class="mini-card-row"><header><strong>${escapeHtml(title)}</strong></header>${body}${detail}${screeningControls(row)}</article>`;
+}
+
+function isDetailField(key, value) {
+  const text = String(value ?? "").trim();
+  if (!text) return false;
+  return /中文摘要|摘要|理由|关键结果|证据限制|说明|依据|fullTextBasis/i.test(key) || text.length > 120;
+}
+
+function detailBlock(label, fields, className) {
+  return `<details class="${className}"><summary>${escapeHtml(label)}</summary>${fields.map((field) =>
+    `<div class="detail-field"><span>${escapeHtml(field.key)}</span><p>${escapeHtml(field.value || "-")}</p></div>`
+  ).join("")}</details>`;
 }
 
 function screeningControls(row) {

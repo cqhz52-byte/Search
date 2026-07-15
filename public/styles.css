@@ -506,6 +506,49 @@ textarea { min-height: 86px; resize: vertical; }
   line-height: 1.5;
   word-break: break-word;
 }
+.mini-card-detail,
+.table-detail {
+  border: 1px solid #dbe5df;
+  border-radius: 8px;
+  background: #fbfdfb;
+}
+.mini-card-detail summary,
+.table-detail summary {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  padding: 0 10px;
+  color: var(--brand);
+  font-size: 12px;
+  font-weight: 900;
+  list-style: none;
+}
+.mini-card-detail summary::-webkit-details-marker,
+.table-detail summary::-webkit-details-marker {
+  display: none;
+}
+.detail-field {
+  display: grid;
+  gap: 4px;
+  border-top: 1px solid var(--line);
+  padding: 10px;
+}
+.detail-field span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+}
+.detail-field p {
+  max-height: 46vh;
+  overflow: auto;
+  margin: 0;
+  color: #213630;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 .screening-actions {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
