@@ -1,4 +1,4 @@
-const APP_VERSION = "2026.07.15.10";
+const APP_VERSION = "2026.07.15.11";
 
 const state = {
   usage: null,
@@ -15,6 +15,8 @@ const state = {
   mobileTab: localStorage.getItem("lit_mobile_tab") || "workflow",
   updateNotice: localStorage.getItem("lit_seen_version") !== APP_VERSION,
   executionMode: localStorage.getItem("lit_execution_mode") || "local",
+  desktopPanels: loadDesktopPanels(),
+  workspaceStep: localStorage.getItem("lit_workspace_step") || "",
   localJobs: loadLocalJobs(),
   stepArtifacts: loadStepArtifacts(),
   activeStepDetail: null,
@@ -113,6 +115,18 @@ function loadStepArtifacts() {
 
 function saveStepArtifacts() {
   localStorage.setItem("lit_step_artifacts", JSON.stringify(state.stepArtifacts));
+}
+
+function loadDesktopPanels() {
+  try {
+    return { resource: false, projects: false, ...JSON.parse(localStorage.getItem("lit_desktop_panels") || "{}") };
+  } catch {
+    return { resource: false, projects: false };
+  }
+}
+
+function saveDesktopPanels() {
+  localStorage.setItem("lit_desktop_panels", JSON.stringify(state.desktopPanels));
 }
 
 function projectArtifacts(projectId) {
@@ -305,7 +319,9 @@ async function runAction(label, action, key = label, options = {}) {
       : (options.successMessage || `${label}\u5b8c\u6210${released}`);
     await refresh(state.selectedId);
     if (options.openStepResult && result?.job && result.job.status !== "running") {
-      openStepDetail(options.projectId || result.job.project_id || result.job.projectId, options.type || result.job.type, "result");
+      const resultType = options.type || result.job.type;
+      if (isMobileViewport()) openStepDetail(options.projectId || result.job.project_id || result.job.projectId, resultType, "result");
+      else setWorkspaceStep(resultType);
     }
   } catch (error) {
     state.message = error.message || `${label}\u5931\u8d25`;
@@ -322,6 +338,10 @@ function render() {
   const selectedProject = state.detail?.project || state.projects.find((project) => project.id === state.selectedId);
   const quotaPercent = usage ? Math.min(100, Math.round((usage.today.usedUnits / Math.max(1, usage.today.dailyLimit)) * 100)) : 0;
   const activeCount = Object.keys(state.busy).length;
+  const layoutClasses = [
+    state.desktopPanels.resource ? "resource-collapsed" : "",
+    state.desktopPanels.projects ? "projects-collapsed" : ""
+  ].filter(Boolean).join(" ");
   app.innerHTML = `
     <div class="app-shell">
       <header class="topbar">
@@ -336,9 +356,10 @@ function render() {
       </header>
       ${state.updateNotice ? updateBanner() : ""}
       ${runtimeStatus(activeCount)}
-      <main class="layout">
-        <section class="resource-panel mobile-tab-panel ${state.mobileTab === "resources" ? "is-active" : ""}">
-          ${sectionTitle("gauge", "资源中心", `<button data-action="cleanup" ${busyAttr("cleanup")}>${busyIcon("recycle", "cleanup")} ${isBusy("cleanup") ? "\u6e05\u7406\u4e2d" : "\u6e05\u7406\u4e34\u65f6\u6587\u4ef6"}</button>`)}
+      <main class="layout ${layoutClasses}">
+        <section class="resource-panel collapsible-panel mobile-tab-panel ${state.desktopPanels.resource ? "is-collapsed" : ""} ${state.mobileTab === "resources" ? "is-active" : ""}">
+          ${sectionTitle("gauge", "资源中心", `<div class="panel-actions"><button class="secondary icon-only desktop-collapse-button" title="${state.desktopPanels.resource ? "展开资源中心" : "收起资源中心"}" data-desktop-panel="resource">${icon(state.desktopPanels.resource ? "plus" : "back")}</button><button data-action="cleanup" ${busyAttr("cleanup")}>${busyIcon("recycle", "cleanup")} ${isBusy("cleanup") ? "\u6e05\u7406\u4e2d" : "\u6e05\u7406\u4e34\u65f6\u6587\u4ef6"}</button></div>`)}
+          <div class="panel-collapsible-body">
           <div class="metric-grid">
             ${metric("R2 对象", usage ? usage.r2.totalObjects : "-", usage ? formatBytes(usage.r2.totalBytes) : "读取中")}
             ${metric("D1 题录", usage ? usage.d1.literature || 0 : "-", `${usage?.d1.projects || 0} 个项目`)}
@@ -347,19 +368,22 @@ function render() {
           <div class="quota-line"><span style="width:${quotaPercent}%"></span></div>
           ${purposeBars(usage)}
           ${executionPanel()}
+          </div>
         </section>
 
-        <section class="project-panel mobile-tab-panel ${state.mobileTab === "projects" ? "is-active" : ""}">
-          ${sectionTitle("database", "项目", createProjectMarkup())}
+        <section class="project-panel collapsible-panel mobile-tab-panel ${state.desktopPanels.projects ? "is-collapsed" : ""} ${state.mobileTab === "projects" ? "is-active" : ""}">
+          ${sectionTitle("database", "项目", `<div class="panel-actions"><button class="secondary icon-only desktop-collapse-button" title="${state.desktopPanels.projects ? "展开项目" : "收起项目"}" data-desktop-panel="projects">${icon(state.desktopPanels.projects ? "plus" : "back")}</button></div>`)}
+          <div class="panel-collapsible-body">
+          ${createProjectMarkup()}
           ${state.detail ? selectedProjectMarkup(state.detail.project) : ""}
           <div class="project-list">
             ${state.projects.length ? state.projects.map(projectRow).join("") : empty("还没有项目，先创建一个研究问题。")}
           </div>
+          </div>
         </section>
 
         <section class="detail-panel desktop-panel">
-          ${sectionTitle("drive", selectedProject?.title || "项目详情", selectedProject ? projectActions(selectedProject) : "")}
-          ${state.detail ? `${workflowCards(state.detail)}${jobsMarkup(state.detail.jobs || [])}${documentsMarkup(state.detail.documents || [])}${literatureTable(state.detail.literature || [])}` : empty("选择项目后查看题录、任务和证据提取状态。")}
+          ${state.detail ? desktopWorkbench(state.detail, selectedProject) : empty("选择项目后查看题录、任务和证据提取状态。")}
         </section>
 
         <section class="workflow-panel mobile-tab-panel ${state.mobileTab === "workflow" ? "is-active" : ""}">
@@ -407,6 +431,8 @@ function bindEvents() {
   document.querySelectorAll("[data-step-open]").forEach((button) => button.addEventListener("click", () => openStepDetail(button.dataset.projectId, button.dataset.stepType, button.dataset.stepOpen)));
   document.querySelector("[data-step-close]")?.addEventListener("click", closeStepDetail);
   document.querySelectorAll("[data-report-action]").forEach((button) => button.addEventListener("click", () => handleReportAction(button.dataset.reportAction)));
+  document.querySelectorAll("[data-desktop-panel]").forEach((button) => button.addEventListener("click", () => toggleDesktopPanel(button.dataset.desktopPanel)));
+  document.querySelectorAll("[data-workspace-step]").forEach((button) => button.addEventListener("click", () => setWorkspaceStep(button.dataset.workspaceStep)));
   document.querySelectorAll("[data-copy-text]").forEach((button) => button.addEventListener("click", () => copyText(button.dataset.copyText)));
   document.querySelectorAll("[data-open-url]").forEach((button) => button.addEventListener("click", () => window.open(button.dataset.openUrl, "_blank", "noopener")));
   document.querySelectorAll("[data-cnki-import]").forEach((input) => input.addEventListener("change", () => importCnkiFile(input)));
@@ -517,7 +543,7 @@ function bindEvents() {
 }
 
 function updateBanner() {
-  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>知网支持打开入口、复制高级检索词、导入摘要文件；摘要报告改为中英文对照表。</span></div><button data-action="dismiss-update">知道了</button></div>';
+  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>电脑端改为商品化工作台布局：项目和资源中心可收起，7 步流程固定在顶部，结果集中显示在主工作区。</span></div><button data-action="dismiss-update">知道了</button></div>';
 }
 
 function runtimeStatus(activeCount) {
@@ -552,6 +578,22 @@ function dismissUpdateNotice() {
   state.updateNotice = false;
   localStorage.setItem("lit_seen_version", APP_VERSION);
   render();
+}
+
+function toggleDesktopPanel(panel) {
+  state.desktopPanels[panel] = !state.desktopPanels[panel];
+  saveDesktopPanels();
+  render();
+}
+
+function setWorkspaceStep(type) {
+  state.workspaceStep = type;
+  localStorage.setItem("lit_workspace_step", type);
+  render();
+}
+
+function isMobileViewport() {
+  return window.matchMedia?.("(max-width: 760px)")?.matches || false;
 }
 
 function sectionTitle(iconName, title, action) {
@@ -649,6 +691,69 @@ function settingsMarkup() {
       <button class="secondary" type="button" data-clear-deepseek ${busyAttr("settings:deepseek:clear")}>${busyIcon("trash", "settings:deepseek:clear")} 清除</button>
     </div>
   </form>`;
+}
+
+function desktopWorkbench(detail, selectedProject) {
+  const activeType = workspaceStep(detail);
+  const artifacts = projectArtifacts(detail.project.id);
+  const artifact = artifacts[activeType];
+  return `<div class="desktop-workbench">
+    <header class="workbench-header">
+      <div>
+        <strong>${escapeHtml(selectedProject?.title || "项目详情")}</strong>
+        <small>${escapeHtml(detail.project.question || "尚未填写研究问题。")}</small>
+      </div>
+      ${projectActions(selectedProject)}
+    </header>
+    ${desktopWorkflowRail(detail, activeType)}
+    <section class="workspace-surface">
+      <div class="workspace-result">
+        <div class="result-heading">
+          <strong>${escapeHtml(jobLabels[activeType] || "流程结果")}</strong>
+          <span>${artifact?.updatedAt ? formatDateTime(artifact.updatedAt) : "选择流程步骤查看结果"}</span>
+          ${artifact?.status === "completed" ? reportActions() : ""}
+        </div>
+        ${artifact ? renderArtifactBody(activeType, artifact) : empty("本步骤还没有执行结果。点击上方流程条中的“执行”生成结果。")}
+      </div>
+      <aside class="workspace-aside">
+        ${jobsMarkup(detail.jobs || [])}
+        ${documentsMarkup(detail.documents || [])}
+      </aside>
+    </section>
+    <section class="workspace-literature">
+      ${literatureTable(detail.literature || [])}
+    </section>
+  </div>`;
+}
+
+function workspaceStep(detail) {
+  const types = Object.keys(jobLabels);
+  const artifacts = projectArtifacts(detail.project.id);
+  if (state.workspaceStep && types.includes(state.workspaceStep)) return state.workspaceStep;
+  const latest = [...types].reverse().find((type) => artifacts[type]?.status === "completed");
+  return latest || types[0];
+}
+
+function desktopWorkflowRail(detail, activeType) {
+  const artifacts = projectArtifacts(detail.project.id);
+  return `<nav class="workflow-rail" aria-label="研究流程">
+    ${Object.keys(jobLabels).map((type, index) => desktopWorkflowStep(detail, type, index + 1, artifacts[type], activeType)).join("")}
+  </nav>`;
+}
+
+function desktopWorkflowStep(detail, type, number, artifact, activeType) {
+  const projectId = detail.project.id;
+  const status = artifact?.status || "empty";
+  const key = `job:${projectId}:${type}`;
+  const busy = isBusy(key);
+  const statusText = busy ? "执行中" : status === "completed" ? "已完成" : status === "running" ? "生成中" : "待执行";
+  return `<article class="workflow-rail-step ${type === activeType ? "active" : ""} status-${escapeAttr(status)}">
+    <button class="rail-select" data-workspace-step="${escapeAttr(type)}" data-project-id="${escapeAttr(projectId)}">
+      <span class="step-number">${number}</span>
+      <span><strong>${escapeHtml(jobLabels[type])}</strong><small>${escapeHtml(statusText)}</small></span>
+    </button>
+    <button class="rail-run" title="执行本步骤" data-job-type="${escapeAttr(type)}" data-project-id="${escapeAttr(projectId)}" ${busyAttr(key)}>${busyIcon("play", key)}</button>
+  </article>`;
 }
 
 function workflowCards(detail) {
@@ -868,15 +973,17 @@ async function handleReportAction(action) {
 
 function currentStepReport() {
   const active = state.activeStepDetail;
-  if (!active || active.view !== "result") return null;
-  const detail = state.detail?.project?.id === active.projectId ? state.detail : null;
-  const artifact = projectArtifacts(active.projectId)[active.type];
+  const detail = state.detail;
+  if (!detail) return null;
+  const type = active?.view === "result" ? active.type : workspaceStep(detail);
+  if (!type) return null;
+  const artifact = projectArtifacts(detail.project.id)[type];
   if (!detail || !artifact || artifact.status !== "completed") return null;
-  const number = Object.keys(jobLabels).indexOf(active.type) + 1;
+  const number = Object.keys(jobLabels).indexOf(type) + 1;
   const project = detail.project || {};
-  const title = `${project.title || "文献证据项目"} - 第 ${number} 步 ${jobLabels[active.type]}`;
+  const title = `${project.title || "文献证据项目"} - 第 ${number} 步 ${jobLabels[type]}`;
   const generatedAt = new Date().toLocaleString();
-  const fileName = cleanReportFileName(`${project.title || "文献证据"}-第${number}步-${jobLabels[active.type]}`);
+  const fileName = cleanReportFileName(`${project.title || "文献证据"}-第${number}步-${jobLabels[type]}`);
   return {
     title,
     fileName,
@@ -884,9 +991,9 @@ function currentStepReport() {
     project,
     artifact,
     stepNumber: number,
-    stepName: jobLabels[active.type],
-    html: buildReportHtml({ title, generatedAt, project, artifact, stepNumber: number, stepName: jobLabels[active.type] }),
-    text: buildReportText({ title, generatedAt, project, artifact, stepNumber: number, stepName: jobLabels[active.type] })
+    stepName: jobLabels[type],
+    html: buildReportHtml({ title, generatedAt, project, artifact, stepNumber: number, stepName: jobLabels[type] }),
+    text: buildReportText({ title, generatedAt, project, artifact, stepNumber: number, stepName: jobLabels[type] })
   };
 }
 
