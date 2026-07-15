@@ -219,19 +219,26 @@ async function runGenerateDownloadList(context) {
 }
 
 async function runDownloadPdfs(context) {
-  const rows = (await getCandidateLiterature(context.db, context.project.id, 10))
-    .filter((item) => item.pmcid && !["downloaded", "fulltext_ready", "failed"].includes(item.pdf_status));
+  const batchLimit = Math.max(1, Math.min(20, Number(context.env.DEFAULT_BATCH_LIMIT || 15)));
+  const stats = await getDownloadCandidateStats(context.db, context.project.id);
+  const rows = await getDownloadCandidates(context.db, context.project.id, batchLimit);
   const results = [];
-  for (const item of rows.slice(0, 5)) {
+  for (const item of rows) {
     const result = await tryStoreOpenFullText(context, item);
     results.push({ "题名": item.title, "PMCID": item.pmcid, "获取": result.status, "格式": result.kind || "-", "来源URL": result.url || "-", "说明": result.note || "" });
   }
+  const summary = rows.length
+    ? `本次尝试获取开放全文 ${results.length}/${stats.eligible} 条；纳入/待定 ${stats.total} 条，有 PMCID ${stats.withPmcid} 条，已保存 ${stats.ready} 条，失败跳过 ${stats.failed} 条，无 PMCID ${stats.noPmcid} 条。`
+    : `没有符合本次自动获取条件的全文；纳入/待定 ${stats.total} 条，有 PMCID ${stats.withPmcid} 条，已保存 ${stats.ready} 条，失败跳过 ${stats.failed} 条，无 PMCID ${stats.noPmcid} 条。`;
   return {
     type: context.type,
     status: "completed",
-    summary: rows.length ? `已小批量尝试获取开放全文：${results.length} 条。优先保存可解析全文 XML，PDF 仅作为可选附件。` : "没有需要重复获取的全文；已保存或失败的题录会被跳过以节省免费额度。",
-    data: { attempted: results.length },
-    sections: [{ title: "全文获取结果", rows: results }]
+    summary: `${summary} 优先保存可解析全文 XML，PDF 仅作为可选附件。`,
+    data: { attempted: results.length, batchLimit, ...stats },
+    sections: [
+      { title: "全文候选统计", rows: [{ "纳入/待定": stats.total, "有PMCID": stats.withPmcid, "可尝试": stats.eligible, "本次上限": batchLimit, "已保存": stats.ready, "失败跳过": stats.failed, "无PMCID": stats.noPmcid }] },
+      { title: "全文获取结果", rows: results }
+    ]
   };
 }
 
@@ -584,6 +591,55 @@ async function getLiterature(db, projectId, limit) {
 async function getCandidateLiterature(db, projectId, limit) {
   const rows = await db.prepare("SELECT * FROM literature WHERE project_id = ? AND deleted_at IS NULL AND screening_status IN ('include', 'maybe') ORDER BY updated_at DESC LIMIT ?").bind(projectId, limit).all();
   return rows.results || [];
+}
+
+async function getDownloadCandidates(db, projectId, limit) {
+  const rows = await db.prepare(`
+    SELECT *
+    FROM literature
+    WHERE project_id = ?
+      AND deleted_at IS NULL
+      AND screening_status IN ('include', 'maybe')
+      AND NULLIF(TRIM(COALESCE(pmcid, '')), '') IS NOT NULL
+      AND COALESCE(pdf_status, 'not_requested') NOT IN ('downloaded', 'fulltext_ready', 'failed')
+    ORDER BY
+      CASE COALESCE(pdf_status, 'not_requested')
+        WHEN 'listed' THEN 0
+        WHEN 'not_requested' THEN 1
+        ELSE 2
+      END,
+      updated_at DESC
+    LIMIT ?
+  `).bind(projectId, limit).all();
+  return rows.results || [];
+}
+
+async function getDownloadCandidateStats(db, projectId) {
+  const row = await db.prepare(`
+    SELECT
+      COUNT(*) AS total,
+      SUM(CASE WHEN NULLIF(TRIM(COALESCE(pmcid, '')), '') IS NOT NULL THEN 1 ELSE 0 END) AS withPmcid,
+      SUM(CASE WHEN NULLIF(TRIM(COALESCE(pmcid, '')), '') IS NULL THEN 1 ELSE 0 END) AS noPmcid,
+      SUM(CASE WHEN COALESCE(pdf_status, 'not_requested') IN ('downloaded', 'fulltext_ready') THEN 1 ELSE 0 END) AS ready,
+      SUM(CASE WHEN COALESCE(pdf_status, 'not_requested') = 'failed' THEN 1 ELSE 0 END) AS failed,
+      SUM(CASE
+        WHEN NULLIF(TRIM(COALESCE(pmcid, '')), '') IS NOT NULL
+          AND COALESCE(pdf_status, 'not_requested') NOT IN ('downloaded', 'fulltext_ready', 'failed')
+        THEN 1 ELSE 0
+      END) AS eligible
+    FROM literature
+    WHERE project_id = ?
+      AND deleted_at IS NULL
+      AND screening_status IN ('include', 'maybe')
+  `).bind(projectId).first();
+  return {
+    total: Number(row?.total || 0),
+    withPmcid: Number(row?.withPmcid || 0),
+    noPmcid: Number(row?.noPmcid || 0),
+    ready: Number(row?.ready || 0),
+    failed: Number(row?.failed || 0),
+    eligible: Number(row?.eligible || 0)
+  };
 }
 
 async function extractFullTextForAnalysis(item) {

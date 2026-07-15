@@ -55,7 +55,21 @@ button.danger { border-color: #ffd0cc; background: var(--danger-bg); color: var(
 }
 .topbar p { margin: 6px 0 0; color: var(--muted); line-height: 1.55; }
 .top-actions { display: flex; align-items: center; gap: 8px; }
-.toast { margin-bottom: 12px; border: 1px solid #d7e5ff; border-radius: 8px; padding: 10px 12px; background: #f3f7ff; color: #174182; font-weight: 800; }
+.runtime-status {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  z-index: 42;
+  width: min(760px, calc(100% - 36px));
+  display: grid;
+  gap: 6px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.runtime-status > * {
+  pointer-events: auto;
+}
+.toast { border: 1px solid #d7e5ff; border-radius: 8px; padding: 10px 12px; background: #f3f7ff; color: #174182; font-weight: 800; box-shadow: 0 10px 28px rgba(26, 37, 33, 0.14); }
 .update-banner {
   display: flex;
   align-items: center;
@@ -85,13 +99,13 @@ button.danger { border-color: #ffd0cc; background: var(--danger-bg); color: var(
   display: flex;
   align-items: center;
   overflow: hidden;
-  margin-bottom: 12px;
   border: 1px solid #c7efe5;
   border-radius: 8px;
   background: #edfdf8;
   color: var(--brand);
   font-size: 13px;
   font-weight: 900;
+  box-shadow: 0 10px 28px rgba(26, 37, 33, 0.14);
 }
 .activity-bar span {
   position: absolute;
@@ -742,6 +756,11 @@ td strong { display: block; max-width: 440px; }
 }
 @media (max-width: 760px) {
   .app-shell { padding: 12px 12px 86px; }
+  .runtime-status {
+    top: auto;
+    bottom: 74px;
+    width: calc(100% - 24px);
+  }
   .topbar, .section-title, .trash-row, .user-row, .job-row { align-items: stretch; flex-direction: column; }
   .document-row {
     align-items: stretch;

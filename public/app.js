@@ -1,4 +1,4 @@
-const APP_VERSION = "2026.07.15.3";
+const APP_VERSION = "2026.07.15.4";
 
 const state = {
   usage: null,
@@ -334,8 +334,7 @@ function render() {
         </div>
       </header>
       ${state.updateNotice ? updateBanner() : ""}
-      ${state.message ? `<div class="toast">${escapeHtml(state.message)}</div>` : ""}
-      ${state.loading || activeCount ? `<div class="activity-bar"><span></span><strong>${state.loading ? "正在刷新数据" : `正在执行 ${activeCount} 个操作`}</strong></div>` : ""}
+      ${runtimeStatus(activeCount)}
       <main class="layout">
         <section class="resource-panel mobile-tab-panel ${state.mobileTab === "resources" ? "is-active" : ""}">
           ${sectionTitle("gauge", "资源中心", `<button data-action="cleanup" ${busyAttr("cleanup")}>${busyIcon("recycle", "cleanup")} ${isBusy("cleanup") ? "\u6e05\u7406\u4e2d" : "\u6e05\u7406\u4e34\u65f6\u6587\u4ef6"}</button>`)}
@@ -513,7 +512,16 @@ function bindEvents() {
 }
 
 function updateBanner() {
-  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>服务器获取全文时会提示可离开页面；项目详情新增已保存 PDF/XML 文件列表，可随时打开参考。</span></div><button data-action="dismiss-update">知道了</button></div>';
+  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>运行状态固定显示；全文获取改为直接查询可下载候选，并展示 PMCID/已保存/失败跳过统计。</span></div><button data-action="dismiss-update">知道了</button></div>';
+}
+
+function runtimeStatus(activeCount) {
+  if (!state.message && !state.loading && !activeCount) return "";
+  const message = state.message ? `<div class="toast">${escapeHtml(state.message)}</div>` : "";
+  const activity = state.loading || activeCount
+    ? `<div class="activity-bar"><span></span><strong>${state.loading ? "正在刷新数据" : `正在执行 ${activeCount} 个操作`}</strong></div>`
+    : "";
+  return `<div class="runtime-status" role="status" aria-live="polite">${message}${activity}</div>`;
 }
 
 function mobileTabbar() {
