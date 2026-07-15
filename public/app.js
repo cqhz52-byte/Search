@@ -697,6 +697,8 @@ function desktopWorkbench(detail, selectedProject) {
   const activeType = workspaceStep(detail);
   const artifacts = projectArtifacts(detail.project.id);
   const artifact = artifacts[activeType];
+  const activeJob = latestStepJob(detail.jobs || [], activeType);
+  const stepNumber = Object.keys(jobLabels).indexOf(activeType) + 1;
   return `<div class="desktop-workbench">
     <header class="workbench-header">
       <div>
@@ -709,21 +711,103 @@ function desktopWorkbench(detail, selectedProject) {
     <section class="workspace-surface">
       <div class="workspace-result">
         <div class="result-heading">
-          <strong>${escapeHtml(jobLabels[activeType] || "流程结果")}</strong>
-          <span>${artifact?.updatedAt ? formatDateTime(artifact.updatedAt) : "选择流程步骤查看结果"}</span>
+          <div class="result-title-block">
+            <strong>${escapeHtml(jobLabels[activeType] || "流程结果")}</strong>
+            <span>第 ${stepNumber} 步${resultTimeText(artifact, activeJob)}</span>
+          </div>
           ${artifact?.status === "completed" ? reportActions() : ""}
         </div>
-        ${artifact ? renderArtifactBody(activeType, artifact) : empty("本步骤还没有执行结果。点击上方流程条中的“执行”生成结果。")}
+        ${stepRunSummary(activeJob, artifact)}
+        <div class="result-body">
+          ${artifact ? renderArtifactBody(activeType, artifact) : empty("本步骤还没有结果。点击上方流程按钮生成。")}
+        </div>
+        ${relatedDocumentsMarkup(activeType, detail.documents || [])}
       </div>
-      <aside class="workspace-aside">
-        ${jobsMarkup(detail.jobs || [])}
-        ${documentsMarkup(detail.documents || [])}
-      </aside>
     </section>
-    <section class="workspace-literature">
-      ${literatureTable(detail.literature || [])}
-    </section>
+    ${literatureDrawer(detail.literature || [])}
   </div>`;
+}
+
+function literatureDrawer(items) {
+  const count = items.length;
+  return `<details class="workspace-literature">
+    <summary><strong>题录状态</strong><span>${count ? `${count} 条` : "暂无题录"}</span></summary>
+    ${literatureTable(items)}
+  </details>`;
+}
+
+function latestStepJob(jobs, type) {
+  return (jobs || [])
+    .map(normalizeJob)
+    .filter((job) => job.type === type)
+    .sort((a, b) => {
+      const activeDelta = Number(isActiveJob(b.status)) - Number(isActiveJob(a.status));
+      if (activeDelta) return activeDelta;
+      return new Date(b.updated_at || 0) - new Date(a.updated_at || 0);
+    })[0];
+}
+
+function resultTimeText(artifact, job) {
+  const value = artifact?.updatedAt || job?.updated_at;
+  return value ? ` · ${formatDateTime(value)}` : "";
+}
+
+function stepRunSummary(job, artifact) {
+  const status = job?.status || artifact?.status || "empty";
+  const total = job?.total_count || 0;
+  const processed = job?.processed_count || 0;
+  const percent = total ? Math.min(100, Math.round((processed / total) * 100)) : artifact?.status === "completed" ? 100 : 0;
+  const progressText = total ? `${processed}/${total} · 批量 ${job?.batch_limit || 15}` : artifact?.summary || statusSummary(status);
+  const showControls = job && (isActiveJob(status) || status === "paused");
+  const controls = showControls ? `<div class="result-job-actions">
+    <button class="secondary icon-only" title="暂停" data-job-action="pause" data-job-id="${escapeAttr(job.id)}" ${busyAttr(`job-action:pause:${job.id}`)}>${busyIcon("pause", `job-action:pause:${job.id}`)}</button>
+    <button class="secondary icon-only" title="继续" data-job-action="resume" data-job-id="${escapeAttr(job.id)}" ${busyAttr(`job-action:resume:${job.id}`)}>${busyIcon("play", `job-action:resume:${job.id}`)}</button>
+  </div>` : "";
+  return `<div class="result-run-summary">
+    <div class="result-status-row">
+      ${statusPill(status)}
+      <span>${escapeHtml(progressText)}</span>
+    </div>
+    <div class="result-progress ${isActiveJob(status) ? "active" : ""}"><span style="width:${percent || (isActiveJob(status) ? 18 : 0)}%"></span></div>
+    ${controls}
+  </div>`;
+}
+
+function statusSummary(status) {
+  const labels = {
+    empty: "待执行",
+    running: "正在生成",
+    completed: "结果已生成",
+    failed: "执行失败",
+    queued: "排队中",
+    paused: "已暂停",
+    paused_quota: "额度暂停"
+  };
+  return labels[status] || status || "待执行";
+}
+
+function relatedDocumentsMarkup(type, documents) {
+  if (!["download_pdfs", "parse_and_analyze_pdfs", "generate_analysis_results"].includes(type)) return "";
+  const activeDocs = (documents || []).filter((item) => item.status !== "released").slice(0, 6);
+  if (!activeDocs.length) return "";
+  return `<section class="result-files">
+    <div class="result-files-head"><strong>相关文件</strong><span>${activeDocs.length} 个</span></div>
+    <div class="document-list">
+      ${activeDocs.map((doc) => {
+        const href = `/api/documents/${encodeURIComponent(doc.id)}`;
+        return `<article class="document-row compact">
+          <div>
+            <strong>${escapeHtml(documentKindLabel(doc.kind, doc.purpose))}</strong>
+            <small>${escapeHtml(doc.r2_key || doc.id)} · ${formatBytes(doc.size_bytes || 0)}</small>
+          </div>
+          <div class="row-actions">
+            <a class="button-link secondary-link" href="${href}" target="_blank" rel="noopener">打开</a>
+            <a class="button-link secondary-link" href="${href}" download>下载</a>
+          </div>
+        </article>`;
+      }).join("")}
+    </div>
+  </section>`;
 }
 
 function workspaceStep(detail) {
@@ -743,7 +827,8 @@ function desktopWorkflowRail(detail, activeType) {
 
 function desktopWorkflowStep(detail, type, number, artifact, activeType) {
   const projectId = detail.project.id;
-  const status = artifact?.status || "empty";
+  const job = latestStepJob(detail.jobs || [], type);
+  const status = artifact?.status || job?.status || "empty";
   const key = `job:${projectId}:${type}`;
   const busy = isBusy(key);
   const statusText = busy ? "执行中" : status === "completed" ? "已完成" : status === "running" ? "生成中" : "待执行";
@@ -765,7 +850,8 @@ function workflowCards(detail) {
 
 function workflowCard(detail, type, number, artifact) {
   const projectId = detail.project.id;
-  const status = artifact?.status || "empty";
+  const job = latestStepJob(detail.jobs || [], type);
+  const status = artifact?.status || job?.status || "empty";
   const statusText = status === "completed" ? "已生成" : status === "running" ? "生成中" : "尚未生成";
   const key = `job:${projectId}:${type}`;
   const busy = isBusy(key);
