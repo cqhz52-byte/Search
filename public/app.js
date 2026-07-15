@@ -1,4 +1,4 @@
-const APP_VERSION = "2026.07.15.5";
+const APP_VERSION = "2026.07.15.6";
 
 const state = {
   usage: null,
@@ -512,7 +512,7 @@ function bindEvents() {
 }
 
 function updateBanner() {
-  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>全文获取不再限制 15 篇；结果列表改为紧凑文件名，详情中可查看正文预览和全文文件。</span></div><button data-action="dismiss-update">知道了</button></div>';
+  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>检索摘要新增 CNKI/知网中文摘要检索式和入口，URL 可直接点击打开。</span></div><button data-action="dismiss-update">知道了</button></div>';
 }
 
 function runtimeStatus(activeCount) {
@@ -774,7 +774,7 @@ function miniTableCell(row, key) {
   if (isDetailField(key, row[key])) {
     return `<td>${detailBlock("查看详情", [{ key, value: row[key] }], "table-detail")}</td>`;
   }
-  return `<td>${escapeHtml(row[key])}</td>`;
+  return `<td>${formatLinkedText(row[key])}</td>`;
 }
 
 function miniCard(row, keys) {
@@ -784,7 +784,7 @@ function miniCard(row, keys) {
     .map((key) => ({ key, value: row[key] }));
   const body = keys
     .filter((key) => row[key] !== title && !isDetailField(key, row[key]))
-    .map((key) => `<div class="mini-card-field"><span>${escapeHtml(key)}</span><p>${escapeHtml(row[key] || "-")}</p></div>`)
+    .map((key) => `<div class="mini-card-field"><span>${escapeHtml(key)}</span><p>${formatLinkedText(row[key] || "-")}</p></div>`)
     .join("");
   const detail = detailFields.length ? detailBlock("查看中文详情", detailFields, "mini-card-detail") : "";
   return `<article class="mini-card-row"><header><strong>${escapeHtml(title)}</strong></header>${body}${detail}${screeningControls(row)}</article>`;
@@ -798,8 +798,17 @@ function isDetailField(key, value) {
 
 function detailBlock(label, fields, className) {
   return `<details class="${className}"><summary>${escapeHtml(label)}</summary>${fields.map((field) =>
-    `<div class="detail-field"><span>${escapeHtml(field.key)}</span><p>${escapeHtml(field.value || "-")}</p></div>`
+    `<div class="detail-field"><span>${escapeHtml(field.key)}</span><p>${formatLinkedText(field.value || "-")}</p></div>`
   ).join("")}</details>`;
+}
+
+function formatLinkedText(value) {
+  const text = String(value ?? "");
+  if (/^https?:\/\/[^\s]+$/i.test(text.trim())) {
+    const href = text.trim();
+    return `<a href="${escapeAttr(href)}" target="_blank" rel="noopener">${escapeHtml(href)}</a>`;
+  }
+  return escapeHtml(text);
 }
 
 function screeningControls(row) {
@@ -831,7 +840,8 @@ function buildStepInput(type, detail) {
       summary: "本步骤输入是第 1 步生成的检索策略；系统据此抓取题录和摘要。",
       sections: [
         { title: "检索策略来源", body: artifacts.expand_query?.status === "completed" ? "已使用第 1 步生成的检索式。" : "第 1 步尚未生成，当前使用项目研究问题和默认关键词作为输入。" },
-        { title: "待检数据库", items: ["PubMed / Europe PMC", "Crossref", "中文数据库导入清单", "开放获取全文入口"] },
+        { title: "待检数据库", items: ["PubMed / Europe PMC", "CNKI/知网中文摘要检索入口", "中文数据库导入清单", "开放获取全文入口"] },
+        { title: "知网说明", body: "知网通常需要机构/IP/VPN/账号登录。系统会生成中文摘要检索式和入口；登录后复制检索式，在主题、篇名、关键词或摘要字段检索，并导出中文题录。" },
         { title: "批量限制", body: "免费额度模式默认小批量分页检索，避免一次写入过多 D1 行。" }
       ]
     }),

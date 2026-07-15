@@ -126,17 +126,35 @@ async function runSearchAbstracts(context) {
   const rows = records.map((item) => ({ "题名": item.title, "来源": item.source || "Europe PMC", "年份": item.year || "-", "摘要": item.abstract || "无摘要" }));
   const pubmedPrimary = plans.find((item) => item.source === "PubMed" && item.kind === "primary")?.query || "";
   const europePrimary = plans.find((item) => item.source === "Europe PMC" && item.kind === "primary")?.query || "";
+  const cnkiGuide = buildCnkiGuide(context.project, latest);
+  stats.push({
+    "来源": "CNKI/知网",
+    "策略": "中文摘要检索入口",
+    "命中总数": "需登录查看",
+    "本次采用": "0",
+    "说明": "已生成知网中文检索式和入口；知网需机构/VPN/账号登录后查看摘要或导出题录。"
+  });
   const pubmedCount = stats.filter((item) => item["来源"] === "PubMed").reduce((sum, item) => sum + (Number(item["命中总数"]) || 0), 0);
   const europeCount = stats.filter((item) => item["来源"] === "Europe PMC").reduce((sum, item) => sum + (Number(item["命中总数"]) || 0), 0);
   const fallbackUsed = stats.some((item) => item["策略"] !== "PICO 组合" && Number(item["本次采用"]) > 0);
   return {
     type: context.type,
     status: "completed",
-    summary: `已真实检索 PubMed 和 Europe PMC，本批合并去重保存 ${records.length} 条摘要，新增 ${inserted} 条题录。${fallbackUsed ? "严格组合命中过少时已自动放宽检索，避免漏检。" : ""}`,
-    data: { pubmedQuery: pubmedPrimary, europePmcQuery: europePrimary, count: records.length, inserted, pubmedCount, europePmcCount: europeCount, stats },
+    summary: `已真实检索 PubMed 和 Europe PMC，本批合并去重保存 ${records.length} 条摘要，新增 ${inserted} 条题录；同时生成 CNKI/知网中文摘要检索入口。${fallbackUsed ? "严格组合命中过少时已自动放宽检索，避免漏检。" : ""}`,
+    data: { pubmedQuery: pubmedPrimary, europePmcQuery: europePrimary, cnkiQuery: cnkiGuide.query, count: records.length, inserted, pubmedCount, europePmcCount: europeCount, stats },
     sections: [
       { title: "PubMed 检索式", code: pubmedPrimary },
       { title: "Europe PMC 检索式", code: europePrimary },
+      {
+        title: "CNKI/知网中文摘要检索",
+        rows: [{
+          "数据库": "中国知网 CNKI",
+          "检索字段": "主题/篇名/关键词/摘要",
+          "中文检索式": cnkiGuide.query,
+          "入口": cnkiGuide.url,
+          "说明": "网页应用不直接抓取知网内容；请登录机构账号后复制检索式，筛选中文摘要并导出题录。"
+        }]
+      },
       { title: "检索统计", rows: stats },
       { title: "合并去重规则", body: "本步骤不是用 AI 去重，而是程序确定性去重：先按 PMID，再按 PMCID、DOI，最后按题名小写匹配。PubMed 先入库，Europe PMC 后合并；重复题录只保留一条。" },
       { title: "摘要结果", rows }
@@ -444,6 +462,41 @@ function buildSearchPlans(project, latest) {
   if (europeI) plans.push({ source: "Europe PMC", kind: "fallback", label: "干预/技术", query: europeI, limit: 25 });
 
   return dedupePlans(plans);
+}
+
+function buildCnkiGuide(project, latest) {
+  const fromAi = safeText(latest?.data?.queries?.cn);
+  const query = fromAi || buildChineseQuery(project, latest) || safeText(project.question || project.title);
+  return {
+    query,
+    url: "https://kns.cnki.net/kns8/AdvSearch?dbprefix=SCDB"
+  };
+}
+
+function buildChineseQuery(project, latest) {
+  const concepts = Array.isArray(latest?.data?.concepts) ? latest.data.concepts : [];
+  const groups = { P: [], I: [], other: [] };
+  for (const concept of concepts) {
+    const terms = uniqueTerms([concept.name, ...asList(concept.zh), ...asList(concept.freeText)])
+      .filter((term) => /[\u4e00-\u9fff]/.test(term))
+      .slice(0, 10);
+    const role = safeText(concept.role).toUpperCase();
+    if (role === "P") groups.P.push(...terms);
+    else if (role === "I") groups.I.push(...terms);
+    else groups.other.push(...terms.slice(0, 4));
+  }
+  const lower = `${project.title || ""} ${project.question || ""}`;
+  if (!groups.I.length && /(不可逆电穿孔|陡脉冲|电场消融|脉冲电场|纳米刀|IRE)/i.test(lower)) {
+    groups.I.push("不可逆电穿孔", "IRE", "陡脉冲", "脉冲电场", "电场消融", "脉冲电场消融", "纳米刀");
+  }
+  if (!groups.P.length && /胰腺/.test(lower)) {
+    groups.P.push("胰腺癌", "胰腺肿瘤", "胰腺恶性肿瘤", "胰腺导管腺癌");
+  }
+  const clauses = [groups.P, groups.I, groups.other]
+    .map((terms) => uniqueTerms(terms).slice(0, 10))
+    .filter((terms) => terms.length)
+    .map((terms) => terms.length > 1 ? `(${terms.join(" OR ")})` : terms[0]);
+  return clauses.join(" AND ");
 }
 
 function extractConcepts(project, latest) {
