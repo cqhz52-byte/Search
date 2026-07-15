@@ -622,7 +622,7 @@ th, td { padding: 11px 12px; border-bottom: 1px solid var(--line); text-align: l
 th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
 td strong { display: block; max-width: 440px; }
 .badge { display: inline-flex; min-height: 26px; align-items: center; border-radius: 999px; padding: 0 9px; background: #edf2f7; color: #334155; font-size: 12px; font-weight: 850; white-space: nowrap; }
-.badge.include, .badge.downloaded, .badge.parsed, .badge.done { background: #e7f7ef; color: #0f6b45; }
+.badge.include, .badge.downloaded, .badge.fulltext_ready, .badge.text_ready, .badge.fulltext_text, .badge.parsed, .badge.done { background: #e7f7ef; color: #0f6b45; }
 .badge.maybe, .badge.listed, .badge.paused_quota { background: #fff6df; color: #8a5a00; }
 .badge.exclude, .badge.failed { background: #fff1f0; color: var(--danger); }
 .empty { min-height: 62px; display: grid; place-items: center; border: 1px dashed var(--line); border-radius: 8px; color: var(--muted); background: #ffffffa6; text-align: center; padding: 12px; }

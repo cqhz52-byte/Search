@@ -1,4 +1,4 @@
-const APP_VERSION = "2026.07.14.15";
+const APP_VERSION = "2026.07.15.1";
 
 const state = {
   usage: null,
@@ -27,7 +27,7 @@ const jobLabels = {
   search_abstracts: "检索摘要",
   analyze_abstracts: "AI 分析摘要",
   generate_download_list: "生成下载列表",
-  download_pdfs: "开始下载全文",
+  download_pdfs: "获取全文",
   parse_and_analyze_pdfs: "解析全文并 AI 分析",
   generate_analysis_results: "生成分析结果"
 };
@@ -37,7 +37,7 @@ const jobNotes = {
   search_abstracts: "按小批量检索题录与摘要，只保存必要元数据。",
   analyze_abstracts: "根据纳入/排除标准聚焦到候选文献。",
   generate_download_list: "整理 DOI、PMID、开放全文入口和失败待办。",
-  download_pdfs: "仅下载开放或已授权来源，避免反复重试。",
+  download_pdfs: "优先保存开放全文 XML，PDF 作为可选附件，避免反复重试。",
   parse_and_analyze_pdfs: "文本型全文抽取，DeepSeek 结构化提取；扫描版再考虑 OCR。",
   generate_analysis_results: "生成证据表、限制说明和结论草稿。"
 };
@@ -507,7 +507,7 @@ function bindEvents() {
 }
 
 function updateBanner() {
-  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>AI 摘要分析结果新增“查看中文详情”，可展开中文摘要、AI 理由和长文本说明。</span></div><button data-action="dismiss-update">知道了</button></div>';
+  return '<div class="update-banner"><div><strong>已更新到 v' + APP_VERSION + '</strong><span>全文获取改为优先保存开放全文 XML；PDF 被验证码或超时拦截时也能继续全文分析。</span></div><button data-action="dismiss-update">知道了</button></div>';
 }
 
 function mobileTabbar() {
@@ -814,8 +814,8 @@ function buildStepInput(type, detail) {
     download_pdfs: () => ({
       summary: "本步骤输入是下载清单，系统会按清单尝试获取开放全文。",
       sections: [
-        { title: "下载队列", rows: included.map((item) => ({ "题名": item.title, "当前PDF状态": item.pdf_status || "not_requested", "来源": item.source || "-" })) },
-        { title: "资源保护", body: "下载前应检查文件大小；超过阈值时提示用户确认。" }
+        { title: "获取队列", rows: included.map((item) => ({ "题名": item.title, "当前全文状态": statusLabel(item.pdf_status || "not_requested"), "来源": item.source || "-" })) },
+        { title: "资源保护", body: "优先保存开放全文 XML；PDF 只在能直接取得且确认是 PDF 文件时保存。" }
       ]
     }),
     parse_and_analyze_pdfs: () => ({
@@ -879,14 +879,14 @@ function buildStepArtifact(type, project, detail) {
       status: "completed",
       summary: `已生成全文下载清单：优先开放获取 PDF，无法自动下载的进入人工清单。`,
       sections: [
-        { title: "下载清单", rows: included.map((item) => ({ "题名": item.title, "DOI或PMID": item.doi || item.pmid || "-", "下载状态": item.pdf_status === "downloaded" ? "已下载" : "待查找开放全文", "来源": item.source || "-" })) }
+        { title: "全文清单", rows: included.map((item) => ({ "题名": item.title, "DOI或PMID": item.doi || item.pmid || "-", "全文状态": statusLabel(item.pdf_status || "not_requested"), "来源": item.source || "-" })) }
       ]
     }),
     download_pdfs: () => ({
       status: "completed",
-      summary: "本机模式已完成下载状态整理；正式接入后只自动下载开放获取 PDF，失败项不反复重试。",
+      summary: "本机模式已完成全文获取状态整理；正式接入后优先保存开放全文 XML，PDF 作为可选附件。",
       sections: [
-        { title: "PDF 状态", rows: included.map((item) => ({ "题名": item.title, "PDF": item.pdf_status === "downloaded" ? "已保存" : "未下载/需人工", "说明": item.pdf_status === "downloaded" ? "可进入解析" : "进入下载清单" })) }
+        { title: "全文状态", rows: included.map((item) => ({ "题名": item.title, "全文": ["downloaded", "fulltext_ready"].includes(item.pdf_status) ? "已保存" : "未取得/需人工", "说明": ["downloaded", "fulltext_ready"].includes(item.pdf_status) ? "可进入全文解析" : "进入人工清单" })) }
       ]
     }),
     parse_and_analyze_pdfs: () => ({
@@ -928,7 +928,8 @@ function applyArtifactToDetail(type, detail) {
   if (type === "download_pdfs") {
     detail.literature = (detail.literature || demoLiterature()).map((item, index) => ({
       ...item,
-      pdf_status: ["include", "maybe"].includes(item.screening_status) && index % 3 !== 1 ? "downloaded" : item.pdf_status
+      pdf_status: ["include", "maybe"].includes(item.screening_status) && index % 3 !== 1 ? "fulltext_ready" : item.pdf_status,
+      parse_status: ["include", "maybe"].includes(item.screening_status) && index % 3 !== 1 ? "text_ready" : item.parse_status
     }));
   }
   if (type === "parse_and_analyze_pdfs") {
@@ -1025,7 +1026,7 @@ function loginDialog() {
 }
 
 function badge(value = "") {
-  return `<span class="badge ${escapeAttr(value)}">${escapeHtml(value.replace("_", " "))}</span>`;
+  return `<span class="badge ${escapeAttr(value)}">${escapeHtml(statusLabel(value))}</span>`;
 }
 
 function empty(text) {
@@ -1103,6 +1104,27 @@ function screeningLabel(status) {
     pending: "未筛选"
   };
   return labels[status] || status || "未筛选";
+}
+
+function statusLabel(status = "") {
+  const labels = {
+    pending: "待筛",
+    include: "纳入",
+    maybe: "待定",
+    exclude: "排除",
+    not_requested: "未请求",
+    listed: "已列入",
+    manual_required: "需人工",
+    failed: "失败",
+    downloaded: "PDF 已保存",
+    fulltext_ready: "全文已保存",
+    text_ready: "文本就绪",
+    fulltext_text: "全文文本",
+    abstract_only: "仅摘要",
+    parsed: "已解析",
+    done: "完成"
+  };
+  return labels[status] || String(status || "-").replace(/_/g, " ");
 }
 
 function purposeName(key) {

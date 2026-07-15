@@ -1,5 +1,5 @@
 import { requireSessionResponse } from "../../../_lib/auth.js";
-import { json, nowIso, randomId, readJson, requireDb, safeText } from "../../../_lib/http.js";
+import { daysFromNow, json, nowIso, randomId, readJson, requireDb, safeText } from "../../../_lib/http.js";
 import { recordUsage } from "../../../_lib/resources.js";
 
 const DEEPSEEK_KEY = "provider:deepseek_api_key";
@@ -221,15 +221,15 @@ async function runDownloadPdfs(context) {
   const rows = (await getCandidateLiterature(context.db, context.project.id, 10)).filter((item) => item.pmcid);
   const results = [];
   for (const item of rows.slice(0, 5)) {
-    const result = await tryDownloadOpenPdf(context, item);
-    results.push({ "题名": item.title, "PMCID": item.pmcid, "下载": result.status, "来源URL": result.url || "-", "说明": result.note || "" });
+    const result = await tryStoreOpenFullText(context, item);
+    results.push({ "题名": item.title, "PMCID": item.pmcid, "获取": result.status, "格式": result.kind || "-", "来源URL": result.url || "-", "说明": result.note || "" });
   }
   return {
     type: context.type,
     status: "completed",
-    summary: `已小批量尝试下载开放获取 PDF：${results.length} 条。`,
+    summary: `已小批量尝试获取开放全文：${results.length} 条。优先保存可解析全文 XML，PDF 仅作为可选附件。`,
     data: { attempted: results.length },
-    sections: [{ title: "PDF 下载结果", rows: results }]
+    sections: [{ title: "全文获取结果", rows: results }]
   };
 }
 
@@ -646,8 +646,47 @@ function cleanFullTextXml(xml) {
     .trim();
 }
 
+async function tryStoreOpenFullText(context, item) {
+  if (!context.env.LIT_R2) return { status: "未绑定 R2", note: "已保留全文清单" };
+  const xmlResult = await tryStoreFullTextXml(context, item);
+  if (xmlResult.ok) return xmlResult;
+  const pdfResult = await tryDownloadOpenPdf(context, item);
+  if (pdfResult.ok) return pdfResult;
+  await context.db.prepare("UPDATE literature SET pdf_status = 'failed', updated_at = ? WHERE id = ?").bind(context.now, item.id).run();
+  return {
+    status: "未取得开放全文",
+    kind: "-",
+    note: [xmlResult.note, pdfResult.note].filter(Boolean).join("；").slice(0, 500)
+  };
+}
+
+async function tryStoreFullTextXml(context, item) {
+  if (!item.pmcid) return { ok: false, status: "无 PMCID", note: "没有 PMCID，无法自动获取开放全文 XML。" };
+  const pmcid = safeText(item.pmcid).replace(/^PMC/i, "PMC");
+  const url = `https://www.ebi.ac.uk/europepmc/webservices/rest/${encodeURIComponent(pmcid)}/fullTextXML`;
+  try {
+    const response = await fetch(url, { headers: { Accept: "application/xml,text/xml,*/*" } });
+    if (!response.ok) return { ok: false, status: `全文 XML 失败 ${response.status}`, url, note: "Europe PMC 未返回开放全文 XML。" };
+    const xml = await response.text();
+    const text = extractTextFromFullTextXml(xml);
+    if (text.length < 800) return { ok: false, status: "全文 XML 过短", url, note: "开放全文 XML 未抽取到足够正文文本。" };
+    const bytes = new TextEncoder().encode(xml);
+    const max = Number(context.env.MAX_PDF_BYTES || 15728640);
+    if (bytes.byteLength > max) return { ok: false, status: "全文 XML 超过大小限制", url, note: `${Math.round(bytes.byteLength / 1024 / 1024)} MB` };
+    const key = `parse/${context.project.id}/${item.id}.fulltext.xml`;
+    await context.env.LIT_R2.put(key, bytes, { httpMetadata: { contentType: "application/xml; charset=utf-8" } });
+    await context.db.prepare("INSERT OR REPLACE INTO documents (id, project_id, literature_id, r2_key, kind, purpose, size_bytes, content_type, status, created_at, last_accessed_at, expires_at) VALUES (?, ?, ?, ?, 'fulltext_xml', 'parse', ?, 'application/xml', 'active', ?, ?, ?)")
+      .bind(randomId("doc"), context.project.id, item.id, key, bytes.byteLength, context.now, context.now, daysFromNow(Number(context.env.PARSE_RETENTION_DAYS || 30)))
+      .run();
+    await context.db.prepare("UPDATE literature SET pdf_status = 'fulltext_ready', parse_status = 'text_ready', updated_at = ? WHERE id = ?").bind(context.now, item.id).run();
+    return { ok: true, status: `已保存全文 XML ${Math.round(bytes.byteLength / 1024)} KB`, kind: "fulltext_xml", url, note: `抽取正文约 ${text.length} 字符，可直接进入全文 AI 分析。` };
+  } catch (error) {
+    return { ok: false, status: "全文 XML 获取失败", url, note: error.message };
+  }
+}
+
 async function tryDownloadOpenPdf(context, item) {
-  if (!context.env.LIT_R2) return { status: "未绑定 R2", note: "已保留下载清单" };
+  if (!context.env.LIT_R2) return { ok: false, status: "未绑定 R2", note: "已保留下载清单" };
   const max = Number(context.env.MAX_PDF_BYTES || 15728640);
   const urls = await candidatePdfUrls(item.pmcid);
   const failures = [];
@@ -659,9 +698,9 @@ async function tryDownloadOpenPdf(context, item) {
         continue;
       }
       const size = Number(response.headers.get("content-length") || 0);
-      if (size && size > max) return { status: "超过单文件大小限制", url, note: `${Math.round(size / 1024 / 1024)} MB` };
+      if (size && size > max) return { ok: false, status: "超过单文件大小限制", url, note: `${Math.round(size / 1024 / 1024)} MB` };
       const buffer = await response.arrayBuffer();
-      if (buffer.byteLength > max) return { status: "超过单文件大小限制", url, note: `${Math.round(buffer.byteLength / 1024 / 1024)} MB` };
+      if (buffer.byteLength > max) return { ok: false, status: "超过单文件大小限制", url, note: `${Math.round(buffer.byteLength / 1024 / 1024)} MB` };
       if (!looksLikePdf(buffer, response.headers.get("content-type") || "")) {
         failures.push(`非 PDF ${url}`);
         continue;
@@ -669,16 +708,15 @@ async function tryDownloadOpenPdf(context, item) {
       const key = `pdf/${context.project.id}/${item.id}.pdf`;
       await context.env.LIT_R2.put(key, buffer, { httpMetadata: { contentType: "application/pdf" } });
       await context.db.prepare("INSERT OR REPLACE INTO documents (id, project_id, literature_id, r2_key, kind, purpose, size_bytes, content_type, status, created_at, last_accessed_at, expires_at) VALUES (?, ?, ?, ?, 'pdf', 'pdf', ?, 'application/pdf', 'active', ?, ?, ?)")
-        .bind(randomId("doc"), context.project.id, item.id, key, buffer.byteLength, context.now, context.now, context.now)
+        .bind(randomId("doc"), context.project.id, item.id, key, buffer.byteLength, context.now, context.now, daysFromNow(Number(context.env.PDF_RETENTION_DAYS || 30)))
         .run();
       await context.db.prepare("UPDATE literature SET pdf_status = 'downloaded', updated_at = ? WHERE id = ?").bind(context.now, item.id).run();
-      return { status: `已下载 ${Math.round(buffer.byteLength / 1024)} KB`, url, note: "已保存到 R2" };
+      return { ok: true, status: `已下载 PDF ${Math.round(buffer.byteLength / 1024)} KB`, kind: "pdf", url, note: "已保存到 R2" };
     } catch (error) {
       failures.push(`${error.message} ${url}`);
     }
   }
-  await context.db.prepare("UPDATE literature SET pdf_status = 'failed', updated_at = ? WHERE id = ?").bind(context.now, item.id).run();
-  return { status: "未找到可下载 PDF", note: failures.slice(0, 3).join("；") };
+  return { ok: false, status: "未找到可下载 PDF", note: failures.slice(0, 3).join("；") };
 }
 
 async function candidatePdfUrls(pmcid) {
