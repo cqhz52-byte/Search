@@ -1,4 +1,4 @@
-const APP_VERSION = "2026.07.15.8";
+const APP_VERSION = "2026.07.15.9";
 
 const state = {
   usage: null,
@@ -829,20 +829,6 @@ function buildReportText({ title, generatedAt, project, artifact, stepNumber, st
 
 function reportBlob(report) {
   return new Blob(["\ufeff", report.html], { type: "application/msword;charset=utf-8" });
-}
-
-function printReport(report) {
-  const win = window.open("", "_blank");
-  if (!win) {
-    state.message = "浏览器拦截了报告窗口，请允许弹窗后重试。";
-    render();
-    return;
-  }
-  win.document.open();
-  win.document.write(report.html);
-  win.document.close();
-  win.focus();
-  setTimeout(() => win.print(), 300);
 }
 
 async function sharePdfReport(report) {
